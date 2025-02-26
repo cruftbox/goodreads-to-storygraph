@@ -59,7 +59,7 @@ cd goodreads-sync
 
 2. Run the script:
 ```bash
-python sync_script.py
+python book_sync.py
 ```
 
 ## What to Expect
