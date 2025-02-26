@@ -29,7 +29,7 @@ Create the following file structure:
 ```
 goodreads-sync/
 │
-├── sync_script.py    # The main Python script
+├── book_sync.py    # The main Python script
 ├── config.json      # Configuration file with your credentials
 └── sync_log.txt    # Will be created automatically when the script runs
 ```
