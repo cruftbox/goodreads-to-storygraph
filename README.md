@@ -29,7 +29,7 @@ pip install lxml==5.1.0
 
 ## File Structure
 
-Create the following file structure:
+Copy the files into the directory (clone the repo):
 ```
 goodreads-sync/
 │
@@ -40,7 +40,7 @@ goodreads-sync/
 
 ## Configuration
 
-1. Create a file named `config.json` with the following structure:
+1. Edit `config.json` with the your information:
 ```json
 {
     "goodreads_user_id": "YOUR_GOODREADS_USER_ID",
@@ -95,7 +95,6 @@ If you encounter errors:
 
 - The script stores your StoryGraph password in plain text in `config.json`
 - Keep the config file secure and don't share it
-- Consider using environment variables for credentials in a production environment
 
 ## Support
 
