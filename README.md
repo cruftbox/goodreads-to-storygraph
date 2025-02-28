@@ -1,5 +1,9 @@
 # Goodreads to StoryGraph Sync Setup Guide
 
+Caveat:  This is a complete hack that I made using Claude.ia to write the Python code for me.  I hope it works for you, but I can't guarantee success. 
+
+I use it on Windows, but you should be able to run it on a Mac or Linux computer, as long as you can get Python & pip running.
+
 ## Prerequisites
 
 - Python 3.8 or higher
