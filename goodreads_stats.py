@@ -134,9 +134,9 @@ def _compute_height_ratios(n_list_lines: int) -> list:
     """Section ratios for the four-section layout: combined title+hero,
     monthly chart, genres, book list. Title and hero merged into one card
     so the top of the page doesn't feel like two empty boxes."""
-    masthead = 2.20   # 4 lines of equal-size type, evenly spaced
+    masthead = 2.10   # 3 lines of equal-size type with generous spacing
     chart = 2.80
-    genres = 2.10
+    genres = 2.55
     # Bumped per-line allocation again (0.30 → 0.36) plus a smaller
     # baseline so the section title sits closer to the first entry.
     list_h = 0.45 + n_list_lines * 0.36
@@ -699,35 +699,32 @@ def _draw_masthead(ax, stats: Stats):
     else:
         headline = "Your Year in Books"
 
-    # All four lines at the same point size; visual hierarchy comes from
+    # All three lines at the same point size; visual hierarchy comes from
     # weight and color, not size variation.
     masthead_size = 20
 
-    ax.text(0.5, 0.84, headline,
+    ax.text(0.5, 0.82, headline,
             ha="center", va="center",
             color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             transform=ax.transAxes)
 
     date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
-    ax.text(0.5, 0.61, date_range,
+    ax.text(0.5, 0.50, date_range,
             ha="center", va="center",
             color=COLOR_TEXT_MUTED, fontsize=masthead_size, fontweight="regular",
             transform=ax.transAxes)
 
     if stats.total_books == 0:
-        ax.text(0.5, 0.30, "No books read in the last 12 months.",
+        ax.text(0.5, 0.18, "No books read in the last 12 months.",
                 ha="center", va="center",
                 color=COLOR_TEXT_BODY, fontsize=masthead_size, fontweight="bold",
                 transform=ax.transAxes)
         return
 
-    ax.text(0.5, 0.38, f"{stats.total_books:,}",
+    summary = f"{stats.total_books:,} books finished in the last 12 months"
+    ax.text(0.5, 0.18, summary,
             ha="center", va="center",
             color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
-            transform=ax.transAxes)
-    ax.text(0.5, 0.15, "books finished",
-            ha="center", va="center",
-            color=COLOR_TEXT_BODY, fontsize=masthead_size, fontweight="regular",
             transform=ax.transAxes)
 
 
@@ -812,11 +809,11 @@ def _draw_books_per_month(ax, stats: Stats):
 
 
 def _short_month_label(full_label: str) -> str:
-    """'Jun 2025' -> 'Jun '25'. Year is always included so the 12-month
+    """'Jun 2025' -> 'Jun 25'. Year is always included so the 12-month
     window's December-to-January transition is unambiguous."""
     parts = full_label.split(" ")
     if len(parts) == 2 and len(parts[1]) == 4:
-        return f"{parts[0]} '{parts[1][2:]}"
+        return f"{parts[0]} {parts[1][2:]}"
     return full_label
 
 
@@ -853,10 +850,12 @@ def _draw_genres(ax, genre_data, stats: Stats):
     colors = [COLOR_PAGES if i == 0 else GENRE_PALETTE[(i + 1) % len(GENRE_PALETTE)]
               for i in range(len(items))]
     y_positions = list(range(len(items)))
-    bars = ax.barh(y_positions, values, color=colors, height=0.55)
+    bars = ax.barh(y_positions, values, color=colors, height=0.42)
     ax.set_yticks(y_positions, labels=labels)
     ax.invert_yaxis()
-    ax.tick_params(axis="y", colors=COLOR_TEXT_BODY, labelsize=10, length=0, pad=8)
+    ax.tick_params(axis="y", colors=COLOR_TEXT_HIGH, labelsize=10.5, length=0, pad=8)
+    for label in ax.get_yticklabels():
+        label.set_fontweight("bold")
 
     # Hide x-axis entirely — the count labels at bar end carry the values.
     ax.tick_params(axis="x", length=0, labelbottom=False)
@@ -887,7 +886,7 @@ def _draw_genres(ax, genre_data, stats: Stats):
 
 def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     _strip_axes(ax)
-    ax.set_title("What you read",
+    ax.set_title("What you read in the last 12 months",
                  color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
                  pad=2, loc="left")
     titles = stats.book_titles
