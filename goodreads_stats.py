@@ -148,15 +148,28 @@ class Stats:
     pages_per_month: list
     book_titles: list      # [(date, title, author), ...] reverse-chronological
     books: list            # in-window Book objects
+    first_name: Optional[str] = None  # for personalizing the title line
 
 
 # -------- fetch --------
 
-def fetch_read_shelf(user_id: str, timeout: int = 30) -> list:
+def fetch_read_shelf(user_id: str, timeout: int = 30) -> tuple:
+    """Return (books, first_name). first_name is parsed from the RSS channel
+    title (e.g., 'Michael\\'s bookshelf: read' -> 'Michael') and is None if
+    the channel title doesn't match the expected pattern."""
     url = GOODREADS_RSS_URL.format(user_id=user_id)
     response = requests.get(url, headers={"User-Agent": USER_AGENT}, timeout=timeout)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, "lxml-xml")
+
+    first_name = None
+    channel = soup.find("channel")
+    if channel is not None:
+        # Direct child <title> only — items also have <title> elements.
+        for t in channel.find_all("title", recursive=False):
+            first_name = _parse_first_name(t.text or "")
+            break
+
     items = soup.find_all("item")
     books = []
     for item in items:
@@ -164,7 +177,26 @@ def fetch_read_shelf(user_id: str, timeout: int = 30) -> list:
             books.append(_parse_item(item))
         except Exception as e:
             logging.warning("Skipping unparseable RSS item: %s", e)
-    return books
+    return books, first_name
+
+
+def _parse_first_name(channel_title: str) -> Optional[str]:
+    """Goodreads channel titles look like 'Michael's bookshelf: read'.
+    Pull everything before \"'s bookshelf\" and take the first whitespace-
+    separated token as the first name. Returns None if the pattern doesn't
+    match."""
+    if not channel_title:
+        return None
+    idx = channel_title.find("'s bookshelf")
+    if idx < 0:
+        # Some locales use a unicode right-single-quote; try that too.
+        idx = channel_title.find("’s bookshelf")
+    if idx < 0:
+        return None
+    name_blob = channel_title[:idx].strip()
+    if not name_blob:
+        return None
+    return name_blob.split()[0]
 
 
 def _text(elem) -> str:
@@ -200,7 +232,11 @@ def _parse_item(item) -> Book:
 
 # -------- aggregate --------
 
-def aggregate_last_12_months(books: list, today: Optional[datetime] = None) -> Stats:
+def aggregate_last_12_months(
+    books: list,
+    today: Optional[datetime] = None,
+    first_name: Optional[str] = None,
+) -> Stats:
     if today is None:
         today = datetime.now().astimezone()
     window_start = today - timedelta(days=365)
@@ -241,6 +277,7 @@ def aggregate_last_12_months(books: list, today: Optional[datetime] = None) -> S
         pages_per_month=[(label, ppm[label]) for label in months],
         book_titles=titles,
         books=in_window,
+        first_name=first_name,
     )
 
 
@@ -527,10 +564,15 @@ def _strip_axes(ax):
 
 
 def _draw_title(ax, stats: Stats):
-    """Headline + deck. Tried a kicker-headline-deck stack but it crowded
-    in the available section height; kept it to two lines for clarity."""
+    """Headline + deck. Personalized with the reader's first name when
+    Goodreads provides it via the RSS channel title."""
     _strip_axes(ax)
-    ax.text(0.5, 0.62, "Your Year in Books",
+    if stats.first_name:
+        # Apostrophe matches typographic convention in editorial use.
+        headline = f"{stats.first_name}’s Year in Books"
+    else:
+        headline = "Your Year in Books"
+    ax.text(0.5, 0.62, headline,
             ha="center", va="center",
             color=COLOR_TEXT_HIGH, fontsize=24, fontweight="bold",
             transform=ax.transAxes)
@@ -806,8 +848,8 @@ def generate(user_id: str, output_dir: Path, today: Optional[datetime] = None) -
     output_dir.mkdir(parents=True, exist_ok=True)
     cache_path = output_dir / "genres_cache.json"
 
-    books = fetch_read_shelf(user_id)
-    stats = aggregate_last_12_months(books, today=today)
+    books, first_name = fetch_read_shelf(user_id)
+    stats = aggregate_last_12_months(books, today=today, first_name=first_name)
 
     if stats.total_books == 0:
         genre_data = ([], 0)
