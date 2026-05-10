@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# Editors / IDEs
+.idea/
+.vscode/
+.claude/
+
+# Local-only docs
+*.docx
+
+# Runtime artifacts
+sync_log.txt
+*.png
+
+# Local credentials override (config.json is checked in with placeholders;
+# if you want to actually exclude real credentials, rename the committed
+# file to config.example.json and run `git rm --cached config.json`)
+config.local.json

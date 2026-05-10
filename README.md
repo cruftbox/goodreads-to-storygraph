@@ -4,6 +4,8 @@ Caveat:  This is a complete hack that I made using Claude.ai to write the Python
 
 I use it on Windows, but you should be able to run it on a Mac or Linux computer, as long as you can get Python & pip running.
 
+Note: this script syncs books you've **rated** on Goodreads (the entries in your updates feed of the form "gave N stars to..."). Books you finish without rating won't be picked up.
+
 ## Prerequisites
 
 - Python 3.8 or higher
@@ -71,7 +73,7 @@ python book_sync.py
 - The script will create a log file (`sync_log.txt`) that tracks all operations
 - Chrome will open automatically and handle the sync process
 - The script will:
-  1. Fetch your recently read books from Goodreads
+  1. Fetch your recently rated books from Goodreads
   2. Log into your StoryGraph account
   3. Add each book to your StoryGraph reading journal with the correct completion date
 

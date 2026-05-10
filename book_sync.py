@@ -76,7 +76,7 @@ class BookSyncAutomation:
                             pub_date = item.find('pubDate')
                             if pub_date:
                                 date_text = pub_date.text
-                                date_read = datetime.strptime(date_text, '%a, %d %b %Y %H:%M:%S %z')
+                                date_read = datetime.strptime(date_text, '%a, %d %b %Y %H:%M:%S %z').astimezone()
                                 
                                 book = {
                                     'title': book_title,
@@ -431,44 +431,6 @@ class BookSyncAutomation:
                 except Exception as e:
                     logging.error(f"All click attempts failed: {str(e)}")
                     raise
-            
-            # Wait for update to complete
-            time.sleep(5)
-            
-            # Attempt multiple click methods
-            logging.info("Attempting to click Update button...")
-            
-            # First try: Regular click with wait for clickable
-            try:
-                clickable_button = WebDriverWait(self.driver, 10).until(
-                    EC.element_to_be_clickable((
-                        By.CSS_SELECTOR, 
-                        "input[type='submit'][name='commit'][value='Update']"
-                    ))
-                )
-                clickable_button.click()
-                logging.info("Successfully clicked Update button using regular click")
-            except Exception as e:
-                logging.warning(f"Regular click failed: {str(e)}")
-                
-                # Second try: JavaScript click with form submission
-                try:
-                    self.driver.execute_script("""
-                        arguments[0].click();
-                        arguments[0].form.submit();
-                    """, update_button)
-                    logging.info("Successfully clicked Update button using JavaScript")
-                except Exception as e:
-                    logging.error(f"JavaScript click also failed: {str(e)}")
-                    
-                    # Final try: Direct form submission
-                    try:
-                        form = self.driver.find_element(By.CSS_SELECTOR, "form")
-                        self.driver.execute_script("arguments[0].submit();", form)
-                        logging.info("Successfully submitted form directly")
-                    except Exception as e:
-                        logging.error(f"Form submission failed: {str(e)}")
-                        raise Exception("All click attempts failed")
             
             # Wait for update to complete
             time.sleep(5)
