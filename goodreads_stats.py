@@ -27,25 +27,48 @@ from matplotlib.gridspec import GridSpec
 from matplotlib.patches import FancyBboxPatch
 
 
+# -------- typography --------
+
+# Try modern humanist sans-serifs in priority order. matplotlib falls through
+# the list silently when a font isn't installed. DejaVu Sans is the matplotlib
+# default and always present.
+plt.rcParams["font.family"] = [
+    "Inter", "Segoe UI Variable", "Segoe UI", "Arial", "DejaVu Sans",
+]
+plt.rcParams["font.size"] = 10
+plt.rcParams["axes.unicode_minus"] = False
+# Quiet the per-character findfont log spam when fallbacks aren't installed.
+import logging as _logging
+_logging.getLogger("matplotlib.font_manager").setLevel(_logging.ERROR)
+
+
 # -------- constants --------
 
 GOODREADS_RSS_URL = "https://www.goodreads.com/review/list_rss/{user_id}?shelf=read"
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 USER_AGENT = "Mozilla/5.0 (compatible; goodreads-to-storygraph/1.0)"
 
-COLOR_PAGE_BG = "#1a1a1a"
-COLOR_PANEL_BG = "#2b2b2b"
-COLOR_BORDER = "#5fa8d3"
-COLOR_TITLE = "#ffffff"
-COLOR_BODY = "#e5e5e5"
-COLOR_MUTED = "#9a9a9a"
-COLOR_BOOKS_BAR = "#7fb3ff"
-COLOR_PAGES_BAR = "#e85a3a"
-COLOR_GRID = (1.0, 1.0, 1.0, 0.12)
+# Refined dark palette. Background and panel both dark with a slight cool
+# tint; type weights carry the hierarchy instead of color noise.
+COLOR_PAGE_BG = "#0f1218"
+COLOR_PANEL_BG = "#171b24"
+COLOR_BORDER = "#6ba8e8"
+
+COLOR_TEXT_HIGH = "#f4f5f9"   # large/bold/heading text
+COLOR_TEXT_BODY = "#cfd3df"   # default body
+COLOR_TEXT_MUTED = "#7c8497"  # captions, dates, secondary metadata
+COLOR_DIVIDER = "#262d3a"
+COLOR_GRID = (1.0, 1.0, 1.0, 0.05)
+
+# Two accent colors used consistently across the figure: blue for "books"
+# everywhere it appears, amber for "pages." Genre palette uses the same
+# blue first so the visual hierarchy stays coherent.
+COLOR_BOOKS = "#7fb3ff"
+COLOR_PAGES = "#f3a657"
 
 GENRE_PALETTE = [
-    "#7fb3ff", "#7ee08f", "#e85a3a", "#c499ff",
-    "#ffd166", "#5fa8d3", "#bcbcbc",
+    "#7fb3ff", "#9bdb87", "#f3a657", "#c499ff",
+    "#ffd166", "#5fa8d3", "#a0a8b9",
 ]
 
 # BISAC top-level categories that are too generic to be useful as a genre bucket.
@@ -305,26 +328,35 @@ def render_visual(stats: Stats, genre_data: tuple, output_dir: Path) -> dict:
 def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PANEL_BG)
 
+    # Five-section vertical layout. Generous outer margins and section gaps
+    # do most of the breathing-room work; height_ratios tune relative weight.
     gs = GridSpec(
-        nrows=6, ncols=1,
+        nrows=5, ncols=1,
         figure=fig,
-        left=0.21, right=0.95, top=0.94, bottom=0.04,
-        height_ratios=[0.45, 0.5, 1.3, 1.3, 1.3, 2.6],
+        left=0.09, right=0.91, top=0.93, bottom=0.06,
+        height_ratios=[0.95, 1.20, 1.70, 1.50, 2.60],
         hspace=0.55,
     )
 
-    _draw_header(fig.add_subplot(gs[0]), stats)
-    _draw_summary(fig.add_subplot(gs[1]), stats)
-    _draw_bar_chart(fig.add_subplot(gs[2]), stats.books_per_month, COLOR_BOOKS_BAR, "Books read per month")
-    _draw_bar_chart(fig.add_subplot(gs[3]), stats.pages_per_month, COLOR_PAGES_BAR, "Pages read per month")
-    _draw_genres(fig.add_subplot(gs[4]), genre_data, stats)
-    _draw_book_list(fig.add_subplot(gs[5]), stats, list_max=fmt["list_max"])
+    _draw_title(fig.add_subplot(gs[0]), stats)
+    _draw_hero(fig.add_subplot(gs[1]), stats)
+    _draw_combined_chart(fig.add_subplot(gs[2]), stats)
+    genre_ax = fig.add_subplot(gs[3])
+    _draw_genres(genre_ax, genre_data, stats)
+    # Genre labels need more horizontal headroom than the bar charts; nudge
+    # this one subplot's left edge right so long labels don't clip.
+    _set_subplot_left(genre_ax, 0.22)
+    _draw_book_list(fig.add_subplot(gs[4]), stats, list_max=fmt["list_max"])
 
-    # Border patch drawn last (on top) so the rounded blue accent is always visible.
+    _draw_section_dividers(fig, gs)
+    _draw_footer(fig, stats)
+
+    # Rounded accent border, drawn last so it sits cleanly on top of any
+    # other figure content.
     border = FancyBboxPatch(
         (0.025, 0.02), 0.95, 0.96,
         boxstyle="round,pad=0,rounding_size=0.025",
-        linewidth=3,
+        linewidth=2,
         edgecolor=COLOR_BORDER,
         facecolor="none",
         transform=fig.transFigure,
@@ -337,6 +369,43 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     plt.close(fig)
 
 
+def _set_subplot_left(ax, new_left: float) -> None:
+    """Override one subplot's left edge while preserving its other bounds.
+    Used for charts whose y-tick labels need more room than the global
+    GridSpec left margin allows."""
+    pos = ax.get_position()
+    ax.set_position([new_left, pos.y0, pos.x1 - new_left, pos.height])
+
+
+def _draw_section_dividers(fig, gs) -> None:
+    """Hairline horizontal dividers between sections — the editorial-grid feel
+    that ties the layout together visually."""
+    n = gs.get_geometry()[0]
+    for i in range(n - 1):
+        # Pull the bottom of section i and the top of section i+1; place the
+        # hairline halfway between them so it sits in the gap, not against a
+        # text baseline.
+        top_pos = gs[i].get_position(fig)
+        bottom_pos = gs[i + 1].get_position(fig)
+        y = (top_pos.y0 + bottom_pos.y1) / 2
+        line = plt.Line2D(
+            [0.10, 0.90], [y, y],
+            transform=fig.transFigure,
+            color=COLOR_DIVIDER, linewidth=0.6,
+            zorder=1,
+        )
+        fig.add_artist(line)
+
+
+def _draw_footer(fig, stats: Stats) -> None:
+    fig.text(
+        0.5, 0.038,
+        f"Source: Goodreads  ·  Generated {stats.window_end.strftime('%b %d, %Y')}",
+        ha="center", va="center",
+        color=COLOR_TEXT_MUTED, fontsize=8,
+    )
+
+
 def _strip_axes(ax):
     for spine in ax.spines.values():
         spine.set_visible(False)
@@ -344,61 +413,152 @@ def _strip_axes(ax):
     ax.set_facecolor(COLOR_PANEL_BG)
 
 
-def _draw_header(ax, stats: Stats):
+def _draw_title(ax, stats: Stats):
+    """Headline + deck. Tried a kicker-headline-deck stack but it crowded
+    in the available section height; kept it to two lines for clarity."""
     _strip_axes(ax)
-    ax.text(0.5, 0.7, "Your Year in Books",
+    ax.text(0.5, 0.62, "Your Year in Books",
             ha="center", va="center",
-            color=COLOR_TITLE, fontsize=22, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=24, fontweight="bold",
             transform=ax.transAxes)
-    date_range = f"{stats.window_start.strftime('%b %d, %Y')} – {stats.window_end.strftime('%b %d, %Y')}"
-    ax.text(0.5, 0.2, date_range,
+    date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
+    ax.text(0.5, 0.22, date_range,
             ha="center", va="center",
-            color=COLOR_MUTED, fontsize=11,
+            color=COLOR_TEXT_MUTED, fontsize=11,
             transform=ax.transAxes)
 
 
-def _draw_summary(ax, stats: Stats):
+def _draw_hero(ax, stats: Stats):
+    """Big stat number, label below, secondary stat in a smaller line."""
     _strip_axes(ax)
+
     if stats.total_books == 0:
         ax.text(0.5, 0.5, "No books read in the last 12 months.",
                 ha="center", va="center",
-                color=COLOR_BODY, fontsize=14, fontweight="bold",
+                color=COLOR_TEXT_BODY, fontsize=14, fontweight="bold",
                 transform=ax.transAxes)
         return
-    main = f"You finished {stats.total_books:,} books and {stats.total_pages:,} pages"
-    sub = "in the last 12 months"
+
+    # Hero: very large books count, plain white. Color is reserved for charts;
+    # the hero leads with size, not hue.
+    ax.text(0.5, 0.78, f"{stats.total_books:,}",
+            ha="center", va="center",
+            color=COLOR_TEXT_HIGH, fontsize=72, fontweight="bold",
+            transform=ax.transAxes)
+    ax.text(0.5, 0.36, "books finished",
+            ha="center", va="center",
+            color=COLOR_TEXT_BODY, fontsize=12, fontweight="semibold",
+            transform=ax.transAxes)
+
+    # Secondary stat — pages, on its own line
+    sub = f"{stats.total_pages:,} pages"
     if stats.books_missing_pages > 0:
         plural = "s" if stats.books_missing_pages != 1 else ""
-        sub += f"  ({stats.books_missing_pages} book{plural} had no page count)"
-    ax.text(0.5, 0.7, main,
+        sub += f"   ·   {stats.books_missing_pages} book{plural} without page count"
+    ax.text(0.5, 0.10, sub,
             ha="center", va="center",
-            color=COLOR_BODY, fontsize=15, fontweight="bold",
-            transform=ax.transAxes)
-    ax.text(0.5, 0.3, sub,
-            ha="center", va="center",
-            color=COLOR_MUTED, fontsize=10,
+            color=COLOR_TEXT_MUTED, fontsize=10,
             transform=ax.transAxes)
 
 
-def _draw_bar_chart(ax, data: list, color: str, title: str):
+def _draw_combined_chart(ax, stats: Stats):
+    """Dual-axis line chart: books (left, blue) and pages (right, amber).
+    One chart instead of two stacked bars — saves vertical space and lets
+    the eye correlate the two series month-over-month."""
+    months = [_short_month_label(m[0]) for m in stats.books_per_month]
+    books_values = [m[1] for m in stats.books_per_month]
+    pages_values = [m[1] for m in stats.pages_per_month]
+    x = list(range(len(months)))
+
     ax.set_facecolor(COLOR_PANEL_BG)
-    labels = [_short_month_label(d[0]) for d in data]
-    values = [d[1] for d in data]
-    x = list(range(len(data)))
-    ax.bar(x, values, color=color, width=0.7)
-    ax.set_xticks(x, labels=labels)
-    ax.set_title(title, color=COLOR_TITLE, fontsize=12, fontweight="bold", pad=8, loc="left")
-    ax.tick_params(colors=COLOR_BODY, labelsize=8)
-    for s in ("top", "right"):
+
+    # Books series: subtle filled area under the line for visual weight.
+    ax.fill_between(x, books_values, color=COLOR_BOOKS, alpha=0.10, zorder=1)
+    ax.plot(x, books_values, color=COLOR_BOOKS, linewidth=2.2,
+            marker="o", markersize=5, markerfacecolor=COLOR_BOOKS,
+            markeredgecolor=COLOR_PANEL_BG, markeredgewidth=1.5,
+            zorder=3, label="Books")
+
+    # Pages on the secondary y-axis.
+    ax2 = ax.twinx()
+    ax2.set_facecolor(COLOR_PANEL_BG)
+    ax2.plot(x, pages_values, color=COLOR_PAGES, linewidth=2.2,
+             marker="o", markersize=5, markerfacecolor=COLOR_PAGES,
+             markeredgecolor=COLOR_PANEL_BG, markeredgewidth=1.5,
+             zorder=3, label="Pages")
+
+    # Annotate the peak books month — single highlighted data point in
+    # the data-journalism tradition.
+    if any(books_values):
+        peak_i = max(range(len(books_values)), key=lambda i: books_values[i])
+        peak_v = books_values[peak_i]
+        if peak_v > 0:
+            ax.annotate(
+                f"{peak_v} {'book' if peak_v == 1 else 'books'}",
+                xy=(peak_i, peak_v),
+                xytext=(0, 12), textcoords="offset points",
+                ha="center", va="bottom",
+                color=COLOR_TEXT_HIGH, fontsize=9, fontweight="semibold",
+                zorder=4,
+            )
+
+    # Section title + colored series labels in a deck line. We place the
+    # second label flush after the first by measuring the rendered bbox of
+    # the first — same trick the book list uses.
+    ax.set_title("Reading by month",
+                 color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
+                 pad=24, loc="left")
+    label_books = ax.text(0.0, 1.05, "Books",
+                          transform=ax.transAxes,
+                          color=COLOR_BOOKS, fontsize=10, fontweight="semibold",
+                          ha="left", va="bottom")
+    ax.figure.canvas.draw()
+    inv = ax.transAxes.inverted()
+    x_end = inv.transform((label_books.get_window_extent().x1, 0))[0]
+    ax.text(x_end + 0.015, 1.05, "·",
+            transform=ax.transAxes,
+            color=COLOR_TEXT_MUTED, fontsize=10,
+            ha="left", va="bottom")
+    ax.text(x_end + 0.04, 1.05, "Pages",
+            transform=ax.transAxes,
+            color=COLOR_PAGES, fontsize=10, fontweight="semibold",
+            ha="left", va="bottom")
+
+    # X axis: month labels
+    ax.set_xticks(x, labels=months)
+    ax.tick_params(axis="x", colors=COLOR_TEXT_MUTED, labelsize=8.5,
+                   length=0, pad=6)
+
+    # Left y axis: books, blue tinted
+    ax.tick_params(axis="y", colors=COLOR_BOOKS, labelsize=8.5,
+                   length=0, pad=4)
+    # Integer-only ticks for books (you don't read 2.5 books)
+    max_books = max(books_values) if books_values else 0
+    if max_books > 0:
+        step = max(1, max_books // 4)
+        ax.set_yticks(list(range(0, max_books + step, step)))
+    ax.set_ylim(bottom=0)
+
+    # Right y axis: pages, amber tinted
+    ax2.tick_params(axis="y", colors=COLOR_PAGES, labelsize=8.5,
+                    length=0, pad=4)
+    ax2.set_ylim(bottom=0)
+
+    # Spines: hide everything except a hairline bottom rule
+    for s in ("top", "left", "right"):
         ax.spines[s].set_visible(False)
-    for s in ("left", "bottom"):
-        ax.spines[s].set_color(COLOR_MUTED)
+    ax.spines["bottom"].set_color(COLOR_DIVIDER)
+    ax.spines["bottom"].set_linewidth(0.8)
+    for s in ax2.spines.values():
+        s.set_visible(False)
+
+    # Subtle gridlines
     ax.yaxis.grid(True, color=COLOR_GRID, linewidth=0.5)
     ax.set_axisbelow(True)
 
 
 def _short_month_label(full_label: str) -> str:
-    """'Jun 2025' -> 'Jun '25'. Always include the year so the 12-month
+    """'Jun 2025' -> 'Jun '25'. Year is always included so the 12-month
     window's December-to-January transition is unambiguous."""
     parts = full_label.split(" ")
     if len(parts) == 2 and len(parts[1]) == 4:
@@ -409,48 +569,69 @@ def _short_month_label(full_label: str) -> str:
 def _draw_genres(ax, genre_data, stats: Stats):
     items, uncategorized = genre_data
     ax.set_facecolor(COLOR_PANEL_BG)
-    ax.set_title("Genres", color=COLOR_TITLE, fontsize=12, fontweight="bold", pad=8, loc="left")
+    ax.set_title("Top genres",
+                 color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
+                 pad=14, loc="left")
 
     if not items:
         for spine in ax.spines.values():
             spine.set_visible(False)
         ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-        ax.text(0.5, 0.5, "Genre data unavailable.",
+        ax.text(0.5, 0.5, "Genre data unavailable",
                 ha="center", va="center",
-                color=COLOR_MUTED, fontsize=10,
+                color=COLOR_TEXT_MUTED, fontsize=10,
                 transform=ax.transAxes)
         return
 
     labels = [_truncate_label(it[0], 18) for it in items]
     values = [it[1] for it in items]
-    colors = [GENRE_PALETTE[i % len(GENRE_PALETTE)] for i in range(len(items))]
+    # Top bar uses the warm accent (the editorial highlight); rest fall
+    # through the muted palette.
+    colors = [COLOR_PAGES if i == 0 else GENRE_PALETTE[(i + 1) % len(GENRE_PALETTE)]
+              for i in range(len(items))]
     y_positions = list(range(len(items)))
-    ax.barh(y_positions, values, color=colors, height=0.7)
+    bars = ax.barh(y_positions, values, color=colors, height=0.55)
     ax.set_yticks(y_positions, labels=labels)
     ax.invert_yaxis()
-    ax.tick_params(colors=COLOR_BODY, labelsize=9)
-    for s in ("top", "right", "left"):
-        ax.spines[s].set_visible(False)
-    ax.spines["bottom"].set_color(COLOR_MUTED)
-    ax.xaxis.grid(True, color=COLOR_GRID, linewidth=0.5)
-    ax.set_axisbelow(True)
+    ax.tick_params(axis="y", colors=COLOR_TEXT_BODY, labelsize=10, length=0, pad=8)
+
+    # Hide x-axis entirely — the count labels at bar end carry the values.
+    ax.tick_params(axis="x", length=0, labelbottom=False)
+
+    # Numeric label at the end of each bar
+    max_val = max(values) if values else 1
+    for bar, v in zip(bars, values):
+        ax.text(bar.get_width() + max_val * 0.02,
+                bar.get_y() + bar.get_height() / 2,
+                f"{v}",
+                ha="left", va="center",
+                color=COLOR_TEXT_BODY, fontsize=10, fontweight="semibold")
+
+    # Extend x range so labels fit without clipping
+    ax.set_xlim(0, max_val * 1.18)
+
+    # No spines, no grid — clean horizontal bars only
+    for s in ax.spines.values():
+        s.set_visible(False)
 
     if stats.total_books > 0 and uncategorized >= max(3, int(0.1 * stats.total_books)):
         plural = "s" if uncategorized != 1 else ""
-        ax.text(1.0, -0.18, f"{uncategorized} book{plural} had no genre data.",
+        ax.text(1.0, -0.20, f"{uncategorized} book{plural} without genre data",
                 ha="right", va="top",
-                color=COLOR_MUTED, fontsize=8,
+                color=COLOR_TEXT_MUTED, fontsize=9, fontstyle="italic",
                 transform=ax.transAxes)
 
 
 def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     _strip_axes(ax)
-    ax.set_title("What you read", color=COLOR_TITLE, fontsize=12, fontweight="bold", pad=8, loc="left")
+    ax.set_title("What you read",
+                 color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
+                 pad=14, loc="left")
     titles = stats.book_titles
     if not titles:
-        ax.text(0.0, 0.95, "(none)",
+        ax.text(0.0, 0.92, "(none)",
                 ha="left", va="top",
-                color=COLOR_MUTED, fontsize=10,
+                color=COLOR_TEXT_MUTED, fontsize=10,
                 transform=ax.transAxes)
         return
 
@@ -458,6 +639,7 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     visible = titles[:list_max]
     n_lines = len(visible) + (1 if truncated else 0)
 
+    # Type sizes scale gently with list length.
     if n_lines <= 10:
         font_size = 11
     elif n_lines <= 20:
@@ -467,40 +649,42 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     else:
         font_size = 8
 
-    # Reserve top 0.07 for the section title; distribute the rest.
-    available = 0.90
-    # Floor on line height so the list never feels cramped on a short list.
-    line_height = max(0.055, available / max(n_lines, 1))
-    start_y = 0.92
+    available = 0.88
+    line_height = max(0.058, available / max(n_lines, 1))
+    start_y = 0.90
 
-    # First pass: render the bullet + title in bold for every line. Capture
-    # the artists so we can measure their widths and place the author/date
-    # suffix to their right in regular weight.
+    # Three text artists per book: bold title (left), author (regular,
+    # positioned flush after title via bbox measurement), date (right-aligned
+    # in muted color, far right column). The right-aligned date column gives
+    # the list an editorial table feel rather than a wall of bullet text.
     title_artists = []
     for i, (date, title, author) in enumerate(visible):
         y = start_y - (i + 1) * line_height
         if y < 0.02:
             break
-        truncated_title = title if len(title) <= 55 else title[:54] + "…"
-        t = ax.text(0.02, y, f"•  {truncated_title}",
-                    ha="left", va="top",
-                    color=COLOR_TITLE, fontsize=font_size, fontweight="bold",
-                    transform=ax.transAxes)
-        suffix = f"   — {author}   ({date.strftime('%b %Y')})"
-        title_artists.append((t, y, suffix))
+        clipped_title = title if len(title) <= 55 else title[:54] + "…"
+        t_title = ax.text(0.0, y, clipped_title,
+                          ha="left", va="top",
+                          color=COLOR_TEXT_HIGH, fontsize=font_size, fontweight="bold",
+                          transform=ax.transAxes)
+        suffix = f"   {author}"
+        ax.text(1.0, y, date.strftime("%b %Y"),
+                ha="right", va="top",
+                color=COLOR_TEXT_MUTED, fontsize=font_size, fontweight="normal",
+                transform=ax.transAxes)
+        title_artists.append((t_title, y, suffix))
 
     if truncated:
         i = len(visible)
         y = start_y - (i + 1) * line_height
         if y >= 0.02:
-            ax.text(0.02, y, f"…and {len(titles) - list_max} more",
+            ax.text(0.0, y, f"…and {len(titles) - list_max} more",
                     ha="left", va="top",
-                    color=COLOR_MUTED, fontsize=font_size, fontstyle="italic",
+                    color=COLOR_TEXT_MUTED, fontsize=font_size, fontstyle="italic",
                     transform=ax.transAxes)
 
-    # Second pass: now that we've drawn the bold titles, ask matplotlib for
-    # their rendered widths so the suffix lines up flush after each one
-    # instead of being column-aligned.
+    # Second pass: position the author flush after each bold title using the
+    # rendered bbox of the title artist.
     ax.figure.canvas.draw()
     inv = ax.transAxes.inverted()
     for t, y, suffix in title_artists:
@@ -508,7 +692,7 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
         x_end_axes, _ = inv.transform((bbox.x1, bbox.y0))
         ax.text(x_end_axes, y, suffix,
                 ha="left", va="top",
-                color=COLOR_BODY, fontsize=font_size, fontweight="normal",
+                color=COLOR_TEXT_BODY, fontsize=font_size, fontweight="normal",
                 transform=ax.transAxes)
 
 
