@@ -134,12 +134,12 @@ def _compute_height_ratios(n_list_lines: int) -> list:
     """Section ratios for the four-section layout: combined title+hero,
     monthly chart, genres, book list. Title and hero merged into one card
     so the top of the page doesn't feel like two empty boxes."""
-    masthead = 2.40   # title + date + big number + label all in one card
+    masthead = 2.20   # 4 lines of equal-size type, evenly spaced
     chart = 2.80
     genres = 2.10
-    # Bumped per-line allocation from 0.22 → 0.30 for more breathing room
-    # between books in the list.
-    list_h = 0.7 + n_list_lines * 0.30
+    # Bumped per-line allocation again (0.30 → 0.36) plus a smaller
+    # baseline so the section title sits closer to the first entry.
+    list_h = 0.45 + n_list_lines * 0.36
     return [masthead, chart, genres, list_h]
 
 
@@ -628,7 +628,7 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     _draw_books_per_month(fig.add_subplot(gs[1]), stats)
     genre_ax = fig.add_subplot(gs[2])
     _draw_genres(genre_ax, genre_data, stats)
-    _set_subplot_left(genre_ax, 0.32)
+    _set_subplot_left(genre_ax, 0.25)
     _draw_book_list(fig.add_subplot(gs[3]), stats, list_max=fmt["list_max"])
 
     _draw_footer(fig, stats)
@@ -699,31 +699,35 @@ def _draw_masthead(ax, stats: Stats):
     else:
         headline = "Your Year in Books"
 
-    ax.text(0.5, 0.86, headline,
+    # All four lines at the same point size; visual hierarchy comes from
+    # weight and color, not size variation.
+    masthead_size = 20
+
+    ax.text(0.5, 0.84, headline,
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=24, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             transform=ax.transAxes)
 
     date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
-    ax.text(0.5, 0.70, date_range,
+    ax.text(0.5, 0.61, date_range,
             ha="center", va="center",
-            color=COLOR_TEXT_MUTED, fontsize=11,
+            color=COLOR_TEXT_MUTED, fontsize=masthead_size, fontweight="regular",
             transform=ax.transAxes)
 
     if stats.total_books == 0:
         ax.text(0.5, 0.30, "No books read in the last 12 months.",
                 ha="center", va="center",
-                color=COLOR_TEXT_BODY, fontsize=14, fontweight="bold",
+                color=COLOR_TEXT_BODY, fontsize=masthead_size, fontweight="bold",
                 transform=ax.transAxes)
         return
 
-    ax.text(0.5, 0.36, f"{stats.total_books:,}",
+    ax.text(0.5, 0.38, f"{stats.total_books:,}",
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=42, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             transform=ax.transAxes)
-    ax.text(0.5, 0.10, "books finished",
+    ax.text(0.5, 0.15, "books finished",
             ha="center", va="center",
-            color=COLOR_TEXT_BODY, fontsize=11, fontweight="semibold",
+            color=COLOR_TEXT_BODY, fontsize=masthead_size, fontweight="regular",
             transform=ax.transAxes)
 
 
@@ -885,7 +889,7 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     _strip_axes(ax)
     ax.set_title("What you read",
                  color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
-                 pad=6, loc="left")
+                 pad=2, loc="left")
     titles = stats.book_titles
     if not titles:
         ax.text(0.0, 0.96, "(none)",
@@ -908,13 +912,12 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     else:
         font_size = 11
 
-    available = 0.92
-    # The section's pixel height grows with the book count (see
-    # _compute_height_ratios + _compute_formats), so a simple
-    # available/n_lines split gives consistent inches-per-line whether
-    # there are 5 books or 50.
+    # Pull the first entry up close to the section title and use the full
+    # vertical space — the section's pixel height grows with the book
+    # count, so this gives consistent inches-per-line at any list size.
+    start_y = 0.98
+    available = 0.96
     line_height = available / max(n_lines, 1)
-    start_y = 0.93
     # Reserve the rightmost slice of the row for the date column. Author
     # text is truncated post-render if it would extend into this band.
     date_col_left = 0.84
