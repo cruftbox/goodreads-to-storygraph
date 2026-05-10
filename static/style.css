@@ -55,13 +55,12 @@ h2 {
 
 .actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  grid-template-columns: 1fr;
+  gap: 12px;
   margin-bottom: 24px;
 }
 
 @media (max-width: 600px) {
-  .actions { grid-template-columns: 1fr; }
   .panel { margin: 12px; padding: 20px; }
 }
 

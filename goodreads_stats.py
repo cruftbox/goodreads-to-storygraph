@@ -35,6 +35,9 @@ from matplotlib.patches import FancyBboxPatch, Rectangle
 plt.rcParams["font.family"] = [
     "Inter", "Segoe UI Variable", "Segoe UI", "Arial", "DejaVu Sans",
 ]
+plt.rcParams["font.serif"] = [
+    "Georgia", "Cambria", "Garamond", "Times New Roman", "DejaVu Serif",
+]
 plt.rcParams["font.size"] = 10
 plt.rcParams["axes.unicode_minus"] = False
 # Quiet the per-character findfont log spam when fallbacks aren't installed.
@@ -102,17 +105,16 @@ GENRE_STOPWORDS = frozenset({
     "fiction", "nonfiction", "non-fiction", "non fiction",
 })
 
-def _compute_formats(stats: "Stats") -> list:
+def _compute_formats(stats: "Stats", style: str = "cards") -> list:
     """Return per-format render configs sized to the actual data.
 
-    PDF and web grow vertically with book count so the full 12-month list
-    fits without cramping. Social stays fixed at the Instagram Story 9:16
-    aspect and continues to truncate the list at 20 entries.
+    `style` controls which render pipeline is used and the output filename
+    prefix:
+    - "cards": original card-based design (default, backwards-compatible).
+    - "editorial": no cards, horizontal rules, restrained palette, serif
+      headline, NYT/Bloomberg-graphics aesthetic.
     """
     n = max(0, stats.total_books)
-    # Tunables: each extra book adds this many vertical inches at the
-    # format's native DPI scale. Tuned so a typical 30-book year reads
-    # comfortably without dwarfing the charts above it.
     extra_per_book = 0.18
     extra_books = max(0, n - 8)
     web_h = 10.0 + extra_books * extra_per_book
@@ -121,21 +123,22 @@ def _compute_formats(stats: "Stats") -> list:
     # fixed Instagram-Story aspect. The image is wider than 9:16 only when
     # the list is long; for a slim year it stays close to portrait.
     social_h = 10.6667 + extra_books * 0.16
+
+    suffix = "" if style == "cards" else f"_{style}"
     return [
-        {"name": "pdf",    "filename": "year_in_books.pdf",
+        {"name": "pdf",    "filename": f"year_in_books{suffix}.pdf",
          "size_in": (8.5, max(11.0, pdf_h)), "dpi": 100, "list_max": 200,
          "list_lines_estimate": n + 1, "title_cap": 70, "date_col_left": 0.84,
-         "x_label_rotation": 0},
-        {"name": "web",    "filename": "year_in_books_web.png",
+         "x_label_rotation": 0, "style": style},
+        {"name": "web",    "filename": f"year_in_books{suffix}_web.png",
          "size_in": (8.0, max(10.5, web_h)), "dpi": 150, "list_max": 200,
          "list_lines_estimate": n + 1, "title_cap": 70, "date_col_left": 0.84,
-         "x_label_rotation": 0},
-        {"name": "social", "filename": "year_in_books_social.png",
+         "x_label_rotation": 0, "style": style},
+        {"name": "social", "filename": f"year_in_books{suffix}_social.png",
          "size_in": (6.0, max(10.6667, social_h)), "dpi": 180, "list_max": 200,
          "list_lines_estimate": n + 1,
-         # Narrower aspect: shorter title cap, more room for the date column,
-         # and tilt the chart's month labels so they don't collide.
-         "title_cap": 38, "date_col_left": 0.76, "x_label_rotation": 30},
+         "title_cap": 38, "date_col_left": 0.76, "x_label_rotation": 30,
+         "style": style},
     ]
 
 
@@ -606,10 +609,13 @@ def _bucket_genres(
 
 # -------- render --------
 
-def render_visual(stats: Stats, genre_data: tuple, output_dir: Path) -> dict:
+def render_visual(stats: Stats, genre_data: tuple, output_dir: Path,
+                  style: str = "cards") -> dict:
+    """Render the year-in-books visual in three formats. `style` selects
+    the design system: "cards" (current) or "editorial" (NYT-inspired)."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    formats = _compute_formats(stats)
+    formats = _compute_formats(stats, style=style)
     results = {}
     for fmt in formats:
         path = output_dir / fmt["filename"]
@@ -619,6 +625,14 @@ def render_visual(stats: Stats, genre_data: tuple, output_dir: Path) -> dict:
 
 
 def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
+    style = fmt.get("style", "cards")
+    if style == "editorial":
+        _render_editorial(stats, genre_data, fmt, path)
+        return
+    _render_cards(stats, genre_data, fmt, path)
+
+
+def _render_cards(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PAGE_BG)
 
     n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
@@ -1001,9 +1015,345 @@ def _truncate_label(s: str, max_len: int) -> str:
     return s if len(s) <= max_len else s[: max_len - 1] + "…"
 
 
+# -------- editorial render (NYT/Bloomberg-inspired) --------
+
+# Single warm accent for the editorial style — restrained color use.
+COLOR_EDITORIAL_ACCENT = COLOR_PAGES  # "#c2691f"
+COLOR_EDITORIAL_RULE = "#b8b3a3"      # editorial horizontal rule — paper grey
+
+
+def _compute_height_ratios_editorial(n_list_lines: int) -> list:
+    """Editorial layout: bigger masthead with serif type, slightly tighter
+    chart and genre sections (no card padding to fill), generous list."""
+    masthead = 2.80
+    chart = 2.60
+    genres = 2.20
+    list_h = 0.50 + n_list_lines * 0.30
+    return [masthead, chart, genres, list_h]
+
+
+def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
+    fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PAGE_BG)
+
+    n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
+    gs = GridSpec(
+        nrows=4, ncols=1,
+        figure=fig,
+        left=0.08, right=0.92, top=0.95, bottom=0.05,
+        height_ratios=_compute_height_ratios_editorial(n_list_lines),
+        hspace=0.50,
+    )
+
+    # No section cards — sections sit directly on the page background.
+    _draw_masthead_editorial(fig.add_subplot(gs[0]), stats)
+    _draw_books_per_month_editorial(fig.add_subplot(gs[1]), stats, fmt=fmt)
+    genre_ax = fig.add_subplot(gs[2])
+    _draw_genres_editorial(genre_ax, genre_data, stats)
+    _set_subplot_left(genre_ax, 0.30)
+    _draw_book_list_editorial(fig.add_subplot(gs[3]), stats, fmt=fmt)
+
+    _draw_section_rules_editorial(fig, gs)
+    _draw_footer_editorial(fig, stats)
+
+    fig.savefig(path, dpi=fmt["dpi"], facecolor=COLOR_PAGE_BG)
+    plt.close(fig)
+
+
+def _draw_section_rules_editorial(fig, gs) -> None:
+    """Hairline rules between sections, drawn in the gap between gridspec
+    rows — the editorial divider that replaces the card backgrounds."""
+    n = gs.get_geometry()[0]
+    for i in range(n - 1):
+        top = gs[i].get_position(fig)
+        bot = gs[i + 1].get_position(fig)
+        y = (top.y0 + bot.y1) / 2
+        line = plt.Line2D(
+            [0.08, 0.92], [y, y],
+            transform=fig.transFigure,
+            color=COLOR_EDITORIAL_RULE, linewidth=0.8,
+        )
+        fig.add_artist(line)
+
+
+def _draw_masthead_editorial(ax, stats: Stats) -> None:
+    """Editorial masthead: serif headline, sans deck, big serif stat number,
+    small caps label below. Hierarchy comes from the type scale, not from
+    color or weight alone."""
+    _strip_axes(ax)
+    ax.set_facecolor(COLOR_PAGE_BG)
+
+    if stats.first_name:
+        headline = f"{stats.first_name}’s Year in Books"
+    else:
+        headline = "Your Year in Books"
+
+    # Headline — serif, large, bold
+    ax.text(0.5, 0.86, headline,
+            ha="center", va="center",
+            color=COLOR_TEXT_HIGH, fontsize=30, fontweight="bold",
+            family="serif",
+            transform=ax.transAxes)
+
+    # Deck — the date range, sans, regular
+    date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
+    ax.text(0.5, 0.66, date_range,
+            ha="center", va="center",
+            color=COLOR_TEXT_MUTED, fontsize=13, fontweight="regular",
+            transform=ax.transAxes)
+
+    if stats.total_books == 0:
+        ax.text(0.5, 0.30, "No books read in the last 12 months.",
+                ha="center", va="center",
+                color=COLOR_TEXT_BODY, fontsize=14, fontweight="bold",
+                transform=ax.transAxes)
+        return
+
+    # Big stat — serif, very large. Slightly smaller than the first pass
+    # so it doesn't crowd the kicker.
+    ax.text(0.5, 0.36, f"{stats.total_books:,}",
+            ha="center", va="center",
+            color=COLOR_TEXT_HIGH, fontsize=58, fontweight="bold",
+            family="serif",
+            transform=ax.transAxes)
+
+    # Caption — sans, small, plain uppercase (the letter-spaced version
+    # got too wide and crashed into the number above).
+    ax.text(0.5, 0.06, "BOOKS FINISHED IN THE LAST 12 MONTHS",
+            ha="center", va="center",
+            color=COLOR_TEXT_MUTED, fontsize=10, fontweight="bold",
+            transform=ax.transAxes)
+
+
+def _draw_section_kicker(ax, label: str) -> None:
+    """Render the small uppercase section label that sits above the chart
+    proper in editorial style — the equivalent of an NYT chart 'kicker'."""
+    ax.text(0.0, 1.10, label,
+            ha="left", va="bottom",
+            color=COLOR_TEXT_HIGH, fontsize=10, fontweight="bold",
+            transform=ax.transAxes)
+
+
+def _draw_books_per_month_editorial(ax, stats: Stats, fmt: dict | None = None) -> None:
+    """Single-color column chart — every column uses the warm editorial
+    accent. Rotated month labels for narrow aspects."""
+    months = [_short_month_label(m[0]) for m in stats.books_per_month]
+    values = [m[1] for m in stats.books_per_month]
+    x = list(range(len(months)))
+
+    ax.set_facecolor(COLOR_PAGE_BG)
+
+    book_width = 0.62
+    book_height = 0.78
+    book_gap_top = 0.06
+
+    for i, count in enumerate(values):
+        for b in range(count):
+            rect = Rectangle(
+                (i - book_width / 2, b + book_gap_top),
+                book_width, book_height,
+                facecolor=COLOR_EDITORIAL_ACCENT,
+                edgecolor=COLOR_PAGE_BG,
+                linewidth=1.0,
+                zorder=2,
+            )
+            ax.add_patch(rect)
+
+    if any(values):
+        peak_i = max(range(len(values)), key=lambda i: values[i])
+        peak_v = values[peak_i]
+        if peak_v > 0:
+            ax.annotate(
+                f"{peak_v} {'book' if peak_v == 1 else 'books'}",
+                xy=(peak_i, peak_v),
+                xytext=(0, 14), textcoords="offset points",
+                ha="center", va="bottom",
+                color=COLOR_TEXT_HIGH, fontsize=10, fontweight="semibold",
+                zorder=4,
+            )
+
+    _draw_section_kicker(ax, "READING BY MONTH")
+
+    max_books = max(values) if values else 1
+    ax.set_xlim(-0.6, len(values) - 0.4)
+    ax.set_ylim(0, max(1, max_books) + 0.7)
+
+    rotation = (fmt or {}).get("x_label_rotation", 0)
+    ax.set_xticks(x, labels=months)
+    ax.tick_params(axis="x", colors=COLOR_TEXT_HIGH, labelsize=10.5,
+                   length=0, pad=8)
+    if rotation:
+        for label in ax.get_xticklabels():
+            label.set_rotation(rotation)
+            label.set_ha("right")
+            label.set_rotation_mode("anchor")
+
+    ax.tick_params(axis="y", colors=COLOR_TEXT_HIGH, labelsize=10.5,
+                   length=0, pad=4)
+    if max_books > 0:
+        step = max(1, max_books // 4)
+        ax.set_yticks(list(range(0, max_books + step, step)))
+
+    for label in ax.get_xticklabels():
+        label.set_fontweight("semibold")
+    for label in ax.get_yticklabels():
+        label.set_fontweight("semibold")
+
+    for s in ("top", "left", "right"):
+        ax.spines[s].set_visible(False)
+    ax.spines["bottom"].set_color(COLOR_EDITORIAL_RULE)
+    ax.spines["bottom"].set_linewidth(0.8)
+    ax.yaxis.grid(True, color=(0, 0, 0, 0.05), linewidth=0.5)
+    ax.set_axisbelow(True)
+
+
+def _draw_genres_editorial(ax, genre_data, stats: Stats) -> None:
+    """Single-color editorial genre chart — top bar in the warm accent,
+    rest in muted dark blue. No multi-color palette, no card."""
+    items, uncategorized = genre_data
+    ax.set_facecolor(COLOR_PAGE_BG)
+
+    _draw_section_kicker(ax, "TOP GENRES")
+
+    if not items:
+        for spine in ax.spines.values():
+            spine.set_visible(False)
+        ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+        msg = (
+            f"Google Books and Goodreads returned no genre data for any of "
+            f"the {stats.total_books} books in the window."
+        ) if stats.total_books > 0 else "No books in the window."
+        ax.text(0.5, 0.4, msg,
+                ha="center", va="center",
+                color=COLOR_TEXT_MUTED, fontsize=10, fontstyle="italic",
+                wrap=True,
+                transform=ax.transAxes)
+        return
+
+    labels = [_truncate_label(it[0], 22) for it in items]
+    values = [it[1] for it in items]
+    # All bars in a single muted dark blue except the top, which gets the
+    # warm accent. NYT's signature single-color-with-highlight.
+    colors = [COLOR_EDITORIAL_ACCENT if i == 0 else "#5a6a85"
+              for i in range(len(items))]
+    y_positions = list(range(len(items)))
+    bars = ax.barh(y_positions, values, color=colors, height=0.42)
+    ax.set_yticks(y_positions, labels=labels)
+    ax.invert_yaxis()
+    ax.tick_params(axis="y", colors=COLOR_TEXT_HIGH, labelsize=10.5, length=0, pad=8)
+    for label in ax.get_yticklabels():
+        label.set_fontweight("bold")
+    ax.tick_params(axis="x", length=0, labelbottom=False)
+
+    max_val = max(values) if values else 1
+    for bar, v in zip(bars, values):
+        ax.text(bar.get_width() + max_val * 0.02,
+                bar.get_y() + bar.get_height() / 2,
+                f"{v}",
+                ha="left", va="center",
+                color=COLOR_TEXT_BODY, fontsize=10.5, fontweight="bold")
+
+    ax.set_xlim(0, max_val * 1.18)
+
+    for s in ax.spines.values():
+        s.set_visible(False)
+
+
+def _draw_book_list_editorial(ax, stats: Stats, fmt: dict | None = None) -> None:
+    """Editorial book list — same right-aligned-date column structure as
+    the cards version, but with a kicker section header instead of an
+    underlined title."""
+    fmt = fmt or {}
+    list_max = fmt.get("list_max", 200)
+    _strip_axes(ax)
+    ax.set_facecolor(COLOR_PAGE_BG)
+    _draw_section_kicker(ax, "WHAT YOU READ")
+
+    titles = stats.book_titles
+    if not titles:
+        ax.text(0.0, 0.92, "(none)",
+                ha="left", va="top",
+                color=COLOR_TEXT_MUTED, fontsize=10,
+                transform=ax.transAxes)
+        return
+
+    truncated = len(titles) > list_max
+    visible = titles[:list_max]
+    n_lines = len(visible) + (1 if truncated else 0)
+
+    if n_lines <= 24:
+        font_size = 13
+    elif n_lines <= 50:
+        font_size = 12
+    else:
+        font_size = 11
+
+    start_y = 0.96
+    available = 0.94
+    line_height = available / max(n_lines, 1)
+    date_col_left = fmt.get("date_col_left", 0.84)
+    title_cap = fmt.get("title_cap", 70)
+
+    title_artists = []
+    for i, (date, title, author) in enumerate(visible):
+        y = start_y - (i + 1) * line_height
+        if y < 0.0:
+            break
+        clipped_title = title if len(title) <= title_cap else title[: max(8, title_cap - 1)] + "…"
+        t_title = ax.text(0.0, y, clipped_title,
+                          ha="left", va="top",
+                          color=COLOR_TEXT_HIGH, fontsize=font_size, fontweight="bold",
+                          family="serif",
+                          transform=ax.transAxes)
+        date_str = _short_month_label(date.strftime("%b %Y"))
+        ax.text(1.0, y, date_str,
+                ha="right", va="top",
+                color=COLOR_TEXT_MUTED, fontsize=font_size, fontweight="regular",
+                transform=ax.transAxes)
+        title_artists.append((t_title, y, author))
+
+    if truncated:
+        i = len(visible)
+        y = start_y - (i + 1) * line_height
+        if y >= 0.0:
+            ax.text(0.0, y, f"…and {len(titles) - list_max} more",
+                    ha="left", va="top",
+                    color=COLOR_TEXT_MUTED, fontsize=font_size, fontstyle="italic",
+                    transform=ax.transAxes)
+
+    ax.figure.canvas.draw()
+    inv = ax.transAxes.inverted()
+    for t, y, author in title_artists:
+        bbox = t.get_window_extent()
+        x_end_axes, _ = inv.transform((bbox.x1, bbox.y0))
+        gap_axes = max(0.0, date_col_left - x_end_axes - 0.012)
+        title_w_axes = x_end_axes
+        chars_in_title = max(1, len(t.get_text()))
+        per_char = title_w_axes / chars_in_title if chars_in_title else 0.012
+        per_char = max(per_char, 0.006)
+        max_author_chars = max(0, int(gap_axes / per_char) - 2)
+        if max_author_chars <= 0:
+            continue
+        author_text = author if len(author) <= max_author_chars else author[: max(2, max_author_chars - 1)] + "…"
+        suffix = "   " + author_text
+        ax.text(x_end_axes, y, suffix,
+                ha="left", va="top",
+                color=COLOR_TEXT_BODY, fontsize=font_size, fontweight="regular",
+                transform=ax.transAxes)
+
+
+def _draw_footer_editorial(fig, stats: Stats) -> None:
+    fig.text(
+        0.5, 0.018,
+        f"Source: Goodreads  ·  Generated {stats.window_end.strftime('%b %d, %Y')}",
+        ha="center", va="center",
+        color=COLOR_TEXT_MUTED, fontsize=8, fontstyle="italic",
+    )
+
+
 # -------- end-to-end --------
 
-def generate(user_id: str, output_dir: Path, today: Optional[datetime] = None) -> dict:
+def generate(user_id: str, output_dir: Path, today: Optional[datetime] = None,
+             style: str = "cards") -> dict:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     cache_path = output_dir / "genres_cache.json"
@@ -1017,11 +1367,12 @@ def generate(user_id: str, output_dir: Path, today: Optional[datetime] = None) -
         genres_by_isbn = lookup_genres(stats.books, cache_path)
         genre_data = aggregate_genres(stats.books, genres_by_isbn)
 
-    paths = render_visual(stats, genre_data, output_dir)
+    paths = render_visual(stats, genre_data, output_dir, style=style)
     return {
         "total_books": stats.total_books,
         "total_pages": stats.total_pages,
         "books_missing_pages": stats.books_missing_pages,
+        "style": style,
         "outputs": {name: str(p) for name, p in paths.items()},
     }
 

@@ -162,8 +162,12 @@ def generate_stats():
             "error": "goodreads_user_id missing or unset in config.json",
         }), 400
 
+    style = request.args.get("style") or (request.form.get("style") if request.form else None) or "cards"
+    if style not in ("cards", "editorial"):
+        style = "cards"
+
     try:
-        result = goodreads_stats.generate(user_id, OUTPUT_DIR)
+        result = goodreads_stats.generate(user_id, OUTPUT_DIR, style=style)
     except Exception as e:
         logging.exception("Stats generation failed")
         return jsonify({"error": f"stats generation failed: {e}"}), 502
@@ -174,6 +178,7 @@ def generate_stats():
         for name, p in outputs.items()
     }
     return jsonify({
+        "style": style,
         "total_books": result["total_books"],
         "total_pages": result["total_pages"],
         "books_missing_pages": result["books_missing_pages"],
