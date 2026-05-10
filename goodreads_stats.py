@@ -82,11 +82,46 @@ GENERIC_TOP_LEVELS = frozenset({
     "Young Adult Fiction", "Young Adult Nonfiction",
 })
 
-OUTPUT_FORMATS = [
-    {"name": "pdf",    "filename": "year_in_books.pdf",        "size_in": (8.5, 11.0),       "dpi": 100, "list_max": 50},
-    {"name": "web",    "filename": "year_in_books_web.png",    "size_in": (8.0, 12.0),       "dpi": 150, "list_max": 50},
-    {"name": "social", "filename": "year_in_books_social.png", "size_in": (6.0, 10.6667),    "dpi": 180, "list_max": 20},
-]
+def _compute_formats(stats: "Stats") -> list:
+    """Return per-format render configs sized to the actual data.
+
+    PDF and web grow vertically with book count so the full 12-month list
+    fits without cramping. Social stays fixed at the Instagram Story 9:16
+    aspect and continues to truncate the list at 20 entries.
+    """
+    n = max(0, stats.total_books)
+    # Tunables: each extra book adds this many vertical inches at the
+    # PDF/web's native DPI scale. Tuned so a typical 30-book year reads
+    # comfortably without dwarfing the charts above it.
+    extra_per_book = 0.18
+    extra_books = max(0, n - 8)
+    web_h = 10.0 + extra_books * extra_per_book
+    pdf_h = 10.5 + extra_books * extra_per_book
+    return [
+        {"name": "pdf",    "filename": "year_in_books.pdf",
+         "size_in": (8.5, max(11.0, pdf_h)), "dpi": 100, "list_max": 200,
+         "list_lines_estimate": n + 1},
+        {"name": "web",    "filename": "year_in_books_web.png",
+         "size_in": (8.0, max(10.5, web_h)), "dpi": 150, "list_max": 200,
+         "list_lines_estimate": n + 1},
+        {"name": "social", "filename": "year_in_books_social.png",
+         "size_in": (6.0, 10.6667), "dpi": 180, "list_max": 20,
+         "list_lines_estimate": min(20, n) + 1},
+    ]
+
+
+def _compute_height_ratios(n_list_lines: int) -> list:
+    """Section ratios that keep the upper sections compact and let the book
+    list grow to fit however many books were read."""
+    title = 0.45
+    hero = 0.80
+    chart = 2.80
+    genres = 1.40
+    # Each list line allocates this many ratio-units. With the figure
+    # height also growing per book (see _compute_formats), this works out
+    # to ~0.27 inches per line at 13pt — comfortable spacing.
+    list_h = 0.6 + n_list_lines * 0.22
+    return [title, hero, chart, genres, list_h]
 
 
 # -------- data classes --------
@@ -225,10 +260,17 @@ def _month_buckets_ending_at(today: datetime, n: int) -> list:
 # -------- genres --------
 
 def lookup_genres(books: list, cache_path: Path, timeout: int = 10) -> dict:
-    """Look up Google Books categories for each book. Uses ISBN when present;
-    falls back to a title+author query when not. Cached by a synthetic key
-    that distinguishes ISBN entries (raw ISBN string) from title/author
-    entries (prefixed "ta:")."""
+    """Look up Google Books categories for each book. Strategy:
+
+    1. If the book has an ISBN, query by ISBN first.
+    2. If the result is empty *or* contains only generic top-level
+       categories ("Fiction" alone, etc.), retry with a title+author query —
+       it sometimes resolves to a richer volume record than the ISBN match.
+    3. If the book has no ISBN at all, go straight to title+author.
+
+    Cached by a synthetic key that distinguishes ISBN entries (raw ISBN
+    string) from title/author entries (prefixed "ta:").
+    """
     cache = _load_cache(cache_path)
     seen = set()
     for b in books:
@@ -239,15 +281,38 @@ def lookup_genres(books: list, cache_path: Path, timeout: int = 10) -> dict:
         if key in cache:
             continue
         try:
+            cats: list = []
             if b.isbn:
-                cache[key] = _query_google_books_isbn(b.isbn, timeout=timeout)
-            else:
-                cache[key] = _query_google_books_title_author(b.title, b.author, timeout=timeout)
+                cats = _query_google_books_isbn(b.isbn, timeout=timeout)
+            if (not cats) or _is_only_generic(cats):
+                ta_cats = _query_google_books_title_author(
+                    b.title, b.author, timeout=timeout
+                )
+                if ta_cats and not _is_only_generic(ta_cats):
+                    cats = ta_cats
+                elif not cats:
+                    cats = ta_cats  # at least save what we got
+            cache[key] = cats
         except Exception as e:
             logging.warning("Genre lookup failed for %s: %s", key, e)
             cache[key] = []
     _save_cache(cache_path, cache)
     return cache
+
+
+def _is_only_generic(cats: list) -> bool:
+    """True when every category in the list is a generic top-level like
+    "Fiction" (no sub-tag, no informative non-fiction top). Empty list
+    returns False so callers handle the "no data" case separately."""
+    if not cats:
+        return False
+    for cat in cats:
+        parts = [p.strip() for p in cat.split(" / ") if p.strip()]
+        if len(parts) >= 2:
+            return False
+        if parts and parts[0] not in GENERIC_TOP_LEVELS:
+            return False
+    return True
 
 
 def _book_key(book) -> str:
@@ -372,8 +437,9 @@ def _bucket_genres(books: list, genres_by_key: dict, *, allow_generic: bool) -> 
 def render_visual(stats: Stats, genre_data: tuple, output_dir: Path) -> dict:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    formats = _compute_formats(stats)
     results = {}
-    for fmt in OUTPUT_FORMATS:
+    for fmt in formats:
         path = output_dir / fmt["filename"]
         _render_one(stats, genre_data, fmt, path)
         results[fmt["name"]] = path
@@ -383,12 +449,13 @@ def render_visual(stats: Stats, genre_data: tuple, output_dir: Path) -> dict:
 def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PAGE_BG)
 
+    n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
     gs = GridSpec(
         nrows=5, ncols=1,
         figure=fig,
-        left=0.09, right=0.91, top=0.93, bottom=0.06,
-        height_ratios=[0.85, 1.20, 1.80, 1.50, 2.80],
-        hspace=0.65,
+        left=0.07, right=0.93, top=0.965, bottom=0.055,
+        height_ratios=_compute_height_ratios(n_list_lines),
+        hspace=0.55,
     )
 
     # Card backgrounds drawn first so they sit behind every chart artist.
@@ -445,7 +512,7 @@ def _draw_section_cards(fig, gs) -> None:
 
 def _draw_footer(fig, stats: Stats) -> None:
     fig.text(
-        0.5, 0.038,
+        0.5, 0.018,
         f"Source: Goodreads  ·  Generated {stats.window_end.strftime('%b %d, %Y')}",
         ha="center", va="center",
         color=COLOR_TEXT_MUTED, fontsize=8,
@@ -533,17 +600,23 @@ def _draw_combined_chart(ax, stats: Stats):
 
     # X axis
     ax.set_xticks(x, labels=months)
-    ax.tick_params(axis="x", colors=COLOR_TEXT_MUTED, labelsize=8.5,
-                   length=0, pad=6)
+    ax.tick_params(axis="x", colors=COLOR_TEXT_HIGH, labelsize=10.5,
+                   length=0, pad=8)
 
     # Left y axis: integer ticks for books
-    ax.tick_params(axis="y", colors=COLOR_TEXT_MUTED, labelsize=8.5,
+    ax.tick_params(axis="y", colors=COLOR_TEXT_HIGH, labelsize=10.5,
                    length=0, pad=4)
     max_books = max(books_values) if books_values else 0
     if max_books > 0:
         step = max(1, max_books // 4)
         ax.set_yticks(list(range(0, max_books + step, step)))
     ax.set_ylim(bottom=0)
+
+    # Bold the tick labels — the user wants them easier to read.
+    for label in ax.get_xticklabels():
+        label.set_fontweight("semibold")
+    for label in ax.get_yticklabels():
+        label.set_fontweight("semibold")
 
     # Spines off; subtle bottom rule and gridlines
     for s in ("top", "left", "right"):
@@ -645,22 +718,23 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     visible = titles[:list_max]
     n_lines = len(visible) + (1 if truncated else 0)
 
-    # Type sizes tuned so the longest title+author still leaves room for
-    # the right-aligned date column without colliding with it.
-    if n_lines <= 8:
+    # With variable figure height (the section grows to fit), we don't
+    # need to shrink type aggressively — the figure simply gets taller for
+    # readers who finish more books.
+    if n_lines <= 24:
         font_size = 13
-    elif n_lines <= 14:
+    elif n_lines <= 50:
         font_size = 12
-    elif n_lines <= 22:
-        font_size = 11
-    elif n_lines <= 32:
-        font_size = 10
     else:
-        font_size = 9
+        font_size = 11
 
-    available = 0.94
-    line_height = max(0.070, available / max(n_lines, 1))
-    start_y = 0.95
+    available = 0.92
+    # The section's pixel height grows with the book count (see
+    # _compute_height_ratios + _compute_formats), so a simple
+    # available/n_lines split gives consistent inches-per-line whether
+    # there are 5 books or 50.
+    line_height = available / max(n_lines, 1)
+    start_y = 0.93
     # Reserve the rightmost slice of the row for the date column. Author
     # text is truncated post-render if it would extend into this band.
     date_col_left = 0.84
