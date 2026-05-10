@@ -111,12 +111,16 @@ def _compute_formats(stats: "Stats") -> list:
     """
     n = max(0, stats.total_books)
     # Tunables: each extra book adds this many vertical inches at the
-    # PDF/web's native DPI scale. Tuned so a typical 30-book year reads
+    # format's native DPI scale. Tuned so a typical 30-book year reads
     # comfortably without dwarfing the charts above it.
     extra_per_book = 0.18
     extra_books = max(0, n - 8)
     web_h = 10.0 + extra_books * extra_per_book
     pdf_h = 10.5 + extra_books * extra_per_book
+    # Social grows vertically too — user prioritized full book list over a
+    # fixed Instagram-Story aspect. The image is wider than 9:16 only when
+    # the list is long; for a slim year it stays close to portrait.
+    social_h = 10.6667 + extra_books * 0.16
     return [
         {"name": "pdf",    "filename": "year_in_books.pdf",
          "size_in": (8.5, max(11.0, pdf_h)), "dpi": 100, "list_max": 200,
@@ -127,8 +131,8 @@ def _compute_formats(stats: "Stats") -> list:
          "list_lines_estimate": n + 1, "title_cap": 70, "date_col_left": 0.84,
          "x_label_rotation": 0},
         {"name": "social", "filename": "year_in_books_social.png",
-         "size_in": (6.0, 10.6667), "dpi": 180, "list_max": 20,
-         "list_lines_estimate": min(20, n) + 1,
+         "size_in": (6.0, max(10.6667, social_h)), "dpi": 180, "list_max": 200,
+         "list_lines_estimate": n + 1,
          # Narrower aspect: shorter title cap, more room for the date column,
          # and tilt the chart's month labels so they don't collide.
          "title_cap": 38, "date_col_left": 0.76, "x_label_rotation": 30},
@@ -660,7 +664,7 @@ def _draw_section_cards(fig, gs) -> None:
         # section title area that lives in the gridspec's title pad.
         margin_x = 0.02
         margin_y_top = 0.030
-        margin_y_bottom = 0.012
+        margin_y_bottom = 0.025
         x0 = pos.x0 - margin_x
         y0 = pos.y0 - margin_y_bottom
         w = (pos.x1 + margin_x) - x0
@@ -716,7 +720,7 @@ def _draw_masthead(ax, stats: Stats):
     date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
     ax.text(0.5, 0.50, date_range,
             ha="center", va="center",
-            color=COLOR_TEXT_MUTED, fontsize=masthead_size, fontweight="regular",
+            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             transform=ax.transAxes)
 
     if stats.total_books == 0:
