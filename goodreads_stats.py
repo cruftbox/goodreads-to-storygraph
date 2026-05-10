@@ -24,7 +24,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.gridspec import GridSpec
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.patches import FancyBboxPatch, Rectangle
 
 
 # -------- typography --------
@@ -82,6 +82,26 @@ GENERIC_TOP_LEVELS = frozenset({
     "Young Adult Fiction", "Young Adult Nonfiction",
 })
 
+# Tags that show up in Goodreads' shelf data but aren't genres — they're
+# format, age category, or shelf-management labels. Compared lowercase.
+GENRE_STOPWORDS = frozenset({
+    # Format / medium
+    "audiobook", "audio book", "audio", "audiobooks",
+    "ebook", "e-book", "e book", "ebooks", "kindle", "print", "books",
+    # Age category
+    "adult", "adults", "young adult", "ya", "new adult",
+    "middle grade", "middle-grade", "middle grades",
+    "children", "childrens", "children's", "kids", "kid", "picture books",
+    # Status / shelf-management
+    "read", "reading", "currently reading", "currently-reading",
+    "want to read", "want-to-read", "to-read", "to read",
+    "owned", "owned-books", "favorites", "favourites", "default",
+    "reread", "re-read", "rereads", "did not finish", "dnf",
+    "library", "borrowed", "wishlist", "to-buy",
+    # Generic top-levels (also filtered by GENERIC_TOP_LEVELS)
+    "fiction", "nonfiction", "non-fiction", "non fiction",
+})
+
 def _compute_formats(stats: "Stats") -> list:
     """Return per-format render configs sized to the actual data.
 
@@ -111,17 +131,16 @@ def _compute_formats(stats: "Stats") -> list:
 
 
 def _compute_height_ratios(n_list_lines: int) -> list:
-    """Section ratios that keep the upper sections compact and let the book
-    list grow to fit however many books were read."""
-    title = 0.45
-    hero = 0.80
+    """Section ratios for the four-section layout: combined title+hero,
+    monthly chart, genres, book list. Title and hero merged into one card
+    so the top of the page doesn't feel like two empty boxes."""
+    masthead = 2.40   # title + date + big number + label all in one card
     chart = 2.80
-    genres = 1.40
-    # Each list line allocates this many ratio-units. With the figure
-    # height also growing per book (see _compute_formats), this works out
-    # to ~0.27 inches per line at 13pt — comfortable spacing.
-    list_h = 0.6 + n_list_lines * 0.22
-    return [title, hero, chart, genres, list_h]
+    genres = 2.10
+    # Bumped per-line allocation from 0.22 → 0.30 for more breathing room
+    # between books in the list.
+    list_h = 0.7 + n_list_lines * 0.30
+    return [masthead, chart, genres, list_h]
 
 
 # -------- data classes --------
@@ -513,53 +532,61 @@ def _save_cache(path: Path, cache: dict) -> None:
 
 
 def aggregate_genres(books: list, genres_by_key: dict) -> tuple:
-    """Return (top_items, uncategorized_count).
+    """Return (top_items, uncategorized_count) for the genre chart.
 
-    Per book: collect distinct sub-genre buckets (BISAC second level when
-    present, otherwise first level). A book contributes 1 to each unique
-    bucket it has — never multiple counts for the same bucket per book.
-    Books that returned no categories from Google Books at all count as
-    uncategorized.
-
-    First pass tries to use only specific buckets (skipping generic
-    top-levels like "Fiction" alone). If that yields nothing, falls back
-    to using the generic top-levels too — better to show "Fiction" than
-    to show "Genre data unavailable" when Google Books only returned
-    coarse categories for every book.
+    Bucketing rules:
+    - Per book, walk its category list in order. Take the first 3 distinct
+      genre tags (after filtering format/age/shelf-management stop-words
+      and generic top-levels like "Fiction" alone). This stops Goodreads'
+      noisier 10-15-tag results from inflating an "Other" bar.
+    - Each kept tag contributes 1 to that bucket's count.
+    - Show the top 10 buckets, sorted by count (ties alphabetical). No
+      "Other" rollup — readers care about what they read, not the long
+      tail.
+    - If the strict pass returns nothing, retry once allowing generic
+      top-levels so a book tagged only "Fiction" still appears.
     """
     counter, uncategorized = _bucket_genres(books, genres_by_key, allow_generic=False)
     if not counter:
-        # Try again allowing generic top-levels — last-resort fallback.
         counter, uncategorized = _bucket_genres(books, genres_by_key, allow_generic=True)
 
     if not counter:
         return ([], uncategorized)
 
     items = sorted(counter.items(), key=lambda kv: (-kv[1], kv[0]))
-    if len(items) > 7:
-        top = items[:6]
-        rest = items[6:]
-        other_count = sum(c for _, c in rest)
-        if other_count > 0:
-            items = top + [("Other", other_count)]
-        else:
-            items = top
-    return (items, uncategorized)
+    return (items[:8], uncategorized)
 
 
-def _bucket_genres(books: list, genres_by_key: dict, *, allow_generic: bool) -> tuple:
+def _bucket_genres(
+    books: list,
+    genres_by_key: dict,
+    *,
+    allow_generic: bool,
+    max_per_book: int = 3,
+) -> tuple:
     counter: dict = {}
     uncategorized = 0
     for b in books:
         cats = genres_by_key.get(_book_key(b), [])
-        book_buckets: set = set()
+        book_buckets: list = []
         for cat in cats:
             parts = [p.strip() for p in cat.split(" / ") if p.strip()]
             if len(parts) >= 2:
-                book_buckets.add(parts[1])
+                bucket = parts[1]
             elif parts:
                 if allow_generic or parts[0] not in GENERIC_TOP_LEVELS:
-                    book_buckets.add(parts[0])
+                    bucket = parts[0]
+                else:
+                    continue
+            else:
+                continue
+            if bucket.lower() in GENRE_STOPWORDS:
+                continue
+            if bucket in book_buckets:
+                continue
+            book_buckets.append(bucket)
+            if len(book_buckets) >= max_per_book:
+                break
         if not book_buckets:
             uncategorized += 1
             continue
@@ -587,23 +614,22 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
 
     n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
     gs = GridSpec(
-        nrows=5, ncols=1,
+        nrows=4, ncols=1,
         figure=fig,
         left=0.07, right=0.93, top=0.965, bottom=0.055,
         height_ratios=_compute_height_ratios(n_list_lines),
-        hspace=0.55,
+        hspace=0.45,
     )
 
     # Card backgrounds drawn first so they sit behind every chart artist.
     _draw_section_cards(fig, gs)
 
-    _draw_title(fig.add_subplot(gs[0]), stats)
-    _draw_hero(fig.add_subplot(gs[1]), stats)
-    _draw_combined_chart(fig.add_subplot(gs[2]), stats)
-    genre_ax = fig.add_subplot(gs[3])
+    _draw_masthead(fig.add_subplot(gs[0]), stats)
+    _draw_books_per_month(fig.add_subplot(gs[1]), stats)
+    genre_ax = fig.add_subplot(gs[2])
     _draw_genres(genre_ax, genre_data, stats)
-    _set_subplot_left(genre_ax, 0.22)
-    _draw_book_list(fig.add_subplot(gs[4]), stats, list_max=fmt["list_max"])
+    _set_subplot_left(genre_ax, 0.32)
+    _draw_book_list(fig.add_subplot(gs[3]), stats, list_max=fmt["list_max"])
 
     _draw_footer(fig, stats)
 
@@ -662,74 +688,88 @@ def _strip_axes(ax):
     ax.set_facecolor(COLOR_PANEL_BG)
 
 
-def _draw_title(ax, stats: Stats):
-    """Headline + deck. Personalized with the reader's first name when
-    Goodreads provides it via the RSS channel title."""
+def _draw_masthead(ax, stats: Stats):
+    """Combined title + hero in a single card. Headline → date deck →
+    big stat number → label, all in one section so we don't get two
+    half-empty cards stacked at the top of the page."""
     _strip_axes(ax)
+
     if stats.first_name:
-        # Apostrophe matches typographic convention in editorial use.
         headline = f"{stats.first_name}’s Year in Books"
     else:
         headline = "Your Year in Books"
-    ax.text(0.5, 0.62, headline,
+
+    ax.text(0.5, 0.86, headline,
             ha="center", va="center",
             color=COLOR_TEXT_HIGH, fontsize=24, fontweight="bold",
             transform=ax.transAxes)
+
     date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
-    ax.text(0.5, 0.22, date_range,
+    ax.text(0.5, 0.70, date_range,
             ha="center", va="center",
             color=COLOR_TEXT_MUTED, fontsize=11,
             transform=ax.transAxes)
 
-
-def _draw_hero(ax, stats: Stats):
-    """Big stat number, label below, secondary stat in a smaller line."""
-    _strip_axes(ax)
-
     if stats.total_books == 0:
-        ax.text(0.5, 0.5, "No books read in the last 12 months.",
+        ax.text(0.5, 0.30, "No books read in the last 12 months.",
                 ha="center", va="center",
                 color=COLOR_TEXT_BODY, fontsize=14, fontweight="bold",
                 transform=ax.transAxes)
         return
 
-    # Hero stat — restrained. Charts are the focus; the count is supporting
-    # editorial info, not the headline.
-    ax.text(0.5, 0.65, f"{stats.total_books:,}",
+    ax.text(0.5, 0.36, f"{stats.total_books:,}",
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=32, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=42, fontweight="bold",
             transform=ax.transAxes)
-    ax.text(0.5, 0.27, "books finished",
+    ax.text(0.5, 0.10, "books finished",
             ha="center", va="center",
             color=COLOR_TEXT_BODY, fontsize=11, fontweight="semibold",
             transform=ax.transAxes)
 
 
-def _draw_combined_chart(ax, stats: Stats):
-    """Books-per-month line chart with a subtle filled area under the line.
-    Highlights the peak month with an inline annotation."""
+def _draw_books_per_month(ax, stats: Stats):
+    """Books per month as columns made of stacked book-spine rectangles —
+    one rectangle per book read that month, slight color variation so the
+    stack reads as separate volumes rather than a solid bar."""
     months = [_short_month_label(m[0]) for m in stats.books_per_month]
-    books_values = [m[1] for m in stats.books_per_month]
+    values = [m[1] for m in stats.books_per_month]
     x = list(range(len(months)))
 
     ax.set_facecolor(COLOR_CARD_BG)
 
-    ax.fill_between(x, books_values, color=COLOR_BOOKS, alpha=0.14, zorder=1)
-    ax.plot(x, books_values, color=COLOR_BOOKS, linewidth=2.4,
-            marker="o", markersize=5.5, markerfacecolor=COLOR_BOOKS,
-            markeredgecolor=COLOR_CARD_BG, markeredgewidth=1.5,
-            zorder=3)
+    # Editorial palette of book-spine colors — subtle variation, no clown
+    # rainbow. The column reads as a stack of books on a shelf.
+    spine_palette = [
+        "#2c5fb8", "#3a78c9", "#4a87d6", "#1f4e9a",
+        "#5a93de", "#274f9a", "#3d6ec0", "#5180c8",
+    ]
 
-    # Annotate the peak — the single highlighted data point in NYT/Bloomberg
-    # tradition.
-    if any(books_values):
-        peak_i = max(range(len(books_values)), key=lambda i: books_values[i])
-        peak_v = books_values[peak_i]
+    book_width = 0.62
+    book_height = 0.78  # leaves a thin gap so stacked spines stay distinct
+    book_gap_top = 0.06
+
+    for i, count in enumerate(values):
+        for b in range(count):
+            color = spine_palette[(i + b) % len(spine_palette)]
+            rect = Rectangle(
+                (i - book_width / 2, b + book_gap_top),
+                book_width, book_height,
+                facecolor=color,
+                edgecolor=COLOR_CARD_BG,
+                linewidth=1.1,
+                zorder=2,
+            )
+            ax.add_patch(rect)
+
+    # Highlight the peak month inline.
+    if any(values):
+        peak_i = max(range(len(values)), key=lambda i: values[i])
+        peak_v = values[peak_i]
         if peak_v > 0:
             ax.annotate(
                 f"{peak_v} {'book' if peak_v == 1 else 'books'}",
                 xy=(peak_i, peak_v),
-                xytext=(0, 12), textcoords="offset points",
+                xytext=(0, 14), textcoords="offset points",
                 ha="center", va="bottom",
                 color=COLOR_TEXT_HIGH, fontsize=10, fontweight="semibold",
                 zorder=4,
@@ -739,27 +779,26 @@ def _draw_combined_chart(ax, stats: Stats):
                  color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
                  pad=14, loc="left")
 
-    # X axis
+    # Set explicit limits — Rectangle patches don't auto-scale axes.
+    max_books = max(values) if values else 1
+    ax.set_xlim(-0.6, len(values) - 0.4)
+    ax.set_ylim(0, max(1, max_books) + 0.7)
+
     ax.set_xticks(x, labels=months)
     ax.tick_params(axis="x", colors=COLOR_TEXT_HIGH, labelsize=10.5,
                    length=0, pad=8)
 
-    # Left y axis: integer ticks for books
     ax.tick_params(axis="y", colors=COLOR_TEXT_HIGH, labelsize=10.5,
                    length=0, pad=4)
-    max_books = max(books_values) if books_values else 0
     if max_books > 0:
         step = max(1, max_books // 4)
         ax.set_yticks(list(range(0, max_books + step, step)))
-    ax.set_ylim(bottom=0)
 
-    # Bold the tick labels — the user wants them easier to read.
     for label in ax.get_xticklabels():
         label.set_fontweight("semibold")
     for label in ax.get_yticklabels():
         label.set_fontweight("semibold")
 
-    # Spines off; subtle bottom rule and gridlines
     for s in ("top", "left", "right"):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color(COLOR_DIVIDER)
