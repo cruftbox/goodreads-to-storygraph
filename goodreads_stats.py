@@ -120,13 +120,18 @@ def _compute_formats(stats: "Stats") -> list:
     return [
         {"name": "pdf",    "filename": "year_in_books.pdf",
          "size_in": (8.5, max(11.0, pdf_h)), "dpi": 100, "list_max": 200,
-         "list_lines_estimate": n + 1},
+         "list_lines_estimate": n + 1, "title_cap": 70, "date_col_left": 0.84,
+         "x_label_rotation": 0},
         {"name": "web",    "filename": "year_in_books_web.png",
          "size_in": (8.0, max(10.5, web_h)), "dpi": 150, "list_max": 200,
-         "list_lines_estimate": n + 1},
+         "list_lines_estimate": n + 1, "title_cap": 70, "date_col_left": 0.84,
+         "x_label_rotation": 0},
         {"name": "social", "filename": "year_in_books_social.png",
          "size_in": (6.0, 10.6667), "dpi": 180, "list_max": 20,
-         "list_lines_estimate": min(20, n) + 1},
+         "list_lines_estimate": min(20, n) + 1,
+         # Narrower aspect: shorter title cap, more room for the date column,
+         # and tilt the chart's month labels so they don't collide.
+         "title_cap": 38, "date_col_left": 0.76, "x_label_rotation": 30},
     ]
 
 
@@ -625,11 +630,11 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     _draw_section_cards(fig, gs)
 
     _draw_masthead(fig.add_subplot(gs[0]), stats)
-    _draw_books_per_month(fig.add_subplot(gs[1]), stats)
+    _draw_books_per_month(fig.add_subplot(gs[1]), stats, fmt=fmt)
     genre_ax = fig.add_subplot(gs[2])
     _draw_genres(genre_ax, genre_data, stats)
     _set_subplot_left(genre_ax, 0.25)
-    _draw_book_list(fig.add_subplot(gs[3]), stats, list_max=fmt["list_max"])
+    _draw_book_list(fig.add_subplot(gs[3]), stats, fmt=fmt)
 
     _draw_footer(fig, stats)
 
@@ -728,7 +733,7 @@ def _draw_masthead(ax, stats: Stats):
             transform=ax.transAxes)
 
 
-def _draw_books_per_month(ax, stats: Stats):
+def _draw_books_per_month(ax, stats: Stats, fmt: dict | None = None):
     """Books per month as columns made of stacked book-spine rectangles —
     one rectangle per book read that month, slight color variation so the
     stack reads as separate volumes rather than a solid bar."""
@@ -785,9 +790,15 @@ def _draw_books_per_month(ax, stats: Stats):
     ax.set_xlim(-0.6, len(values) - 0.4)
     ax.set_ylim(0, max(1, max_books) + 0.7)
 
+    rotation = (fmt or {}).get("x_label_rotation", 0)
     ax.set_xticks(x, labels=months)
     ax.tick_params(axis="x", colors=COLOR_TEXT_HIGH, labelsize=10.5,
                    length=0, pad=8)
+    if rotation:
+        for label in ax.get_xticklabels():
+            label.set_rotation(rotation)
+            label.set_ha("right")
+            label.set_rotation_mode("anchor")
 
     ax.tick_params(axis="y", colors=COLOR_TEXT_HIGH, labelsize=10.5,
                    length=0, pad=4)
@@ -884,7 +895,10 @@ def _draw_genres(ax, genre_data, stats: Stats):
                 transform=ax.transAxes)
 
 
-def _draw_book_list(ax, stats: Stats, list_max: int = 50):
+def _draw_book_list(ax, stats: Stats, fmt: dict | None = None, list_max: int | None = None):
+    fmt = fmt or {}
+    if list_max is None:
+        list_max = fmt.get("list_max", 50)
     _strip_axes(ax)
     ax.set_title("What you read in the last 12 months",
                  color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
@@ -919,7 +933,9 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     line_height = available / max(n_lines, 1)
     # Reserve the rightmost slice of the row for the date column. Author
     # text is truncated post-render if it would extend into this band.
-    date_col_left = 0.84
+    # Social uses a tighter cap — the card is narrower.
+    date_col_left = fmt.get("date_col_left", 0.84)
+    title_cap = fmt.get("title_cap", 70)
 
     # Three text artists per book: bold title (left), author (regular,
     # positioned flush after title via bbox measurement), date (right-
@@ -929,7 +945,7 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
         y = start_y - (i + 1) * line_height
         if y < 0.0:
             break
-        clipped_title = title if len(title) <= 50 else title[:49] + "…"
+        clipped_title = title if len(title) <= title_cap else title[: max(8, title_cap - 1)] + "…"
         t_title = ax.text(0.0, y, clipped_title,
                           ha="left", va="top",
                           color=COLOR_TEXT_HIGH, fontsize=font_size, fontweight="bold",
