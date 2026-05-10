@@ -179,6 +179,45 @@ h2 {
 
 .download:hover { background: #a0c8ff; }
 
+.previews {
+  margin-top: 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.preview-block {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+
+.preview {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  background: #fff;
+}
+
+.preview-web    { width: 600px; }
+.preview-social { width: 360px; }
+
+@media (max-width: 700px) {
+  .preview-web, .preview-social { width: 100%; }
+}
+
 .footnote {
   margin: 22px 0 0;
   color: var(--muted);

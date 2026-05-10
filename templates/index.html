@@ -30,6 +30,7 @@
       <pre id="log-area" class="log hidden"></pre>
       <div id="stats-result" class="result hidden"></div>
       <div id="downloads" class="downloads hidden"></div>
+      <div id="previews" class="previews hidden"></div>
     </section>
 
     <p class="footnote">Runs locally on 127.0.0.1. Configure your Goodreads user ID in <code>config.json</code>.</p>
@@ -44,6 +45,7 @@
     const logArea = document.getElementById("log-area");
     const statsResult = document.getElementById("stats-result");
     const downloads = document.getElementById("downloads");
+    const previews = document.getElementById("previews");
 
     function show(el)  { el.classList.remove("hidden"); }
     function hide(el)  { el.classList.add("hidden"); }
@@ -58,6 +60,7 @@
       hide(logArea); logArea.textContent = "";
       hide(statsResult); statsResult.innerHTML = "";
       hide(downloads); downloads.innerHTML = "";
+      hide(previews); previews.innerHTML = "";
     }
 
     async function postJSON(url) {
@@ -165,6 +168,22 @@
         `<a class="download" href="${url}" download>${label}</a>`
       ).join("");
       show(downloads);
+
+      // Cache-bust by appending a timestamp so re-runs don't show the
+      // previous render's image.
+      const ts = Date.now();
+      const blocks = [
+        d.downloads.web    && { label: "Web (1200×1800)",      url: d.downloads.web,    cls: "preview-web" },
+        d.downloads.social && { label: "Social (1080×1920)",   url: d.downloads.social, cls: "preview-social" },
+      ].filter(Boolean);
+
+      previews.innerHTML = blocks.map(b => `
+        <figure class="preview-block">
+          <figcaption class="preview-label">${b.label}</figcaption>
+          <img class="preview ${b.cls}" src="${b.url}?t=${ts}" alt="${b.label} preview" />
+        </figure>
+      `).join("");
+      show(previews);
     });
   </script>
 </body>

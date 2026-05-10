@@ -48,28 +48,28 @@ GOODREADS_RSS_URL = "https://www.goodreads.com/review/list_rss/{user_id}?shelf=r
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 USER_AGENT = "Mozilla/5.0 (compatible; goodreads-to-storygraph/1.0)"
 
-# Refined dark palette. Page sits darkest; section "cards" sit slightly
-# elevated above it for delineation. Axes facecolors match the card color.
-COLOR_PAGE_BG = "#0d1016"
-COLOR_CARD_BG = "#1a1f2c"
+# Light editorial palette. Magazine-for-readers feel: warm cream page,
+# clean white cards, deep saturated text and accents.
+COLOR_PAGE_BG = "#f4efe4"
+COLOR_CARD_BG = "#ffffff"
 COLOR_PANEL_BG = COLOR_CARD_BG  # axes facecolors should match cards
-COLOR_BORDER = "#6ba8e8"
+COLOR_CARD_EDGE = "#e2dccc"     # subtle paper-edge stroke around cards
+COLOR_BORDER = "#3a78c9"        # accent for the optional outer border
 
-COLOR_TEXT_HIGH = "#f4f5f9"   # large/bold/heading text
-COLOR_TEXT_BODY = "#cfd3df"   # default body
-COLOR_TEXT_MUTED = "#7c8497"  # captions, dates, secondary metadata
-COLOR_DIVIDER = "#262d3a"
-COLOR_GRID = (1.0, 1.0, 1.0, 0.05)
+COLOR_TEXT_HIGH = "#1c2030"   # near-black for headlines & big numbers
+COLOR_TEXT_BODY = "#3a3f50"   # body text on light cards
+COLOR_TEXT_MUTED = "#7d8294"  # captions, dates, secondary metadata
+COLOR_DIVIDER = "#e3ddcd"
+COLOR_GRID = (0.0, 0.0, 0.0, 0.06)
 
-# Two accent colors used consistently across the figure: blue for "books"
-# everywhere it appears, amber for "pages." Genre palette uses the same
-# blue first so the visual hierarchy stays coherent.
-COLOR_BOOKS = "#7fb3ff"
-COLOR_PAGES = "#f3a657"
+# Saturated editorial accents that read on light backgrounds. Books blue,
+# pages amber. Used consistently wherever those series appear.
+COLOR_BOOKS = "#2c5fb8"
+COLOR_PAGES = "#c2691f"
 
 GENRE_PALETTE = [
-    "#7fb3ff", "#9bdb87", "#f3a657", "#c499ff",
-    "#ffd166", "#5fa8d3", "#a0a8b9",
+    "#2c5fb8", "#3f8a52", "#c2691f", "#7e4ea8",
+    "#c8961d", "#3a8aa6", "#8a8f9f",
 ]
 
 # BISAC top-level categories that are too generic to be useful as a genre bucket.
@@ -225,30 +225,69 @@ def _month_buckets_ending_at(today: datetime, n: int) -> list:
 # -------- genres --------
 
 def lookup_genres(books: list, cache_path: Path, timeout: int = 10) -> dict:
+    """Look up Google Books categories for each book. Uses ISBN when present;
+    falls back to a title+author query when not. Cached by a synthetic key
+    that distinguishes ISBN entries (raw ISBN string) from title/author
+    entries (prefixed "ta:")."""
     cache = _load_cache(cache_path)
-    isbns_seen_this_run = set()
+    seen = set()
     for b in books:
-        if not b.isbn or b.isbn in isbns_seen_this_run:
+        key = _book_key(b)
+        if not key or key in seen:
             continue
-        isbns_seen_this_run.add(b.isbn)
-        if b.isbn in cache:
+        seen.add(key)
+        if key in cache:
             continue
         try:
-            cache[b.isbn] = _query_google_books(b.isbn, timeout=timeout)
+            if b.isbn:
+                cache[key] = _query_google_books_isbn(b.isbn, timeout=timeout)
+            else:
+                cache[key] = _query_google_books_title_author(b.title, b.author, timeout=timeout)
         except Exception as e:
-            logging.warning("Genre lookup failed for ISBN %s: %s", b.isbn, e)
-            cache[b.isbn] = []
+            logging.warning("Genre lookup failed for %s: %s", key, e)
+            cache[key] = []
     _save_cache(cache_path, cache)
     return cache
 
 
-def _query_google_books(isbn: str, timeout: int = 10) -> list:
+def _book_key(book) -> str:
+    if book.isbn:
+        return book.isbn
+    title = (book.title or "").strip().lower()
+    author = (book.author or "").strip().lower()
+    if not (title or author):
+        return ""
+    return f"ta:{title}|{author}"
+
+
+def _query_google_books_isbn(isbn: str, timeout: int = 10) -> list:
     response = requests.get(
         GOOGLE_BOOKS_URL,
         params={"q": f"isbn:{isbn}"},
         headers={"User-Agent": USER_AGENT},
         timeout=timeout,
     )
+    return _extract_categories_from_response(response)
+
+
+def _query_google_books_title_author(title: str, author: str, timeout: int = 10) -> list:
+    parts = []
+    if title and title.strip():
+        parts.append(f'intitle:"{title.strip()}"')
+    if author and author.strip():
+        parts.append(f'inauthor:"{author.strip()}"')
+    if not parts:
+        return []
+    response = requests.get(
+        GOOGLE_BOOKS_URL,
+        params={"q": "+".join(parts), "maxResults": 1},
+        headers={"User-Agent": USER_AGENT},
+        timeout=timeout,
+    )
+    return _extract_categories_from_response(response)
+
+
+def _extract_categories_from_response(response) -> list:
     if response.status_code != 200:
         return []
     data = response.json()
@@ -272,7 +311,7 @@ def _save_cache(path: Path, cache: dict) -> None:
     path.write_text(json.dumps(cache, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def aggregate_genres(books: list, genres_by_isbn: dict) -> tuple:
+def aggregate_genres(books: list, genres_by_key: dict) -> tuple:
     """Return (top_items, uncategorized_count).
 
     Per book: collect distinct sub-genre buckets (BISAC second level when
@@ -287,10 +326,10 @@ def aggregate_genres(books: list, genres_by_isbn: dict) -> tuple:
     to show "Genre data unavailable" when Google Books only returned
     coarse categories for every book.
     """
-    counter, uncategorized = _bucket_genres(books, genres_by_isbn, allow_generic=False)
+    counter, uncategorized = _bucket_genres(books, genres_by_key, allow_generic=False)
     if not counter:
         # Try again allowing generic top-levels — last-resort fallback.
-        counter, uncategorized = _bucket_genres(books, genres_by_isbn, allow_generic=True)
+        counter, uncategorized = _bucket_genres(books, genres_by_key, allow_generic=True)
 
     if not counter:
         return ([], uncategorized)
@@ -307,11 +346,11 @@ def aggregate_genres(books: list, genres_by_isbn: dict) -> tuple:
     return (items, uncategorized)
 
 
-def _bucket_genres(books: list, genres_by_isbn: dict, *, allow_generic: bool) -> tuple:
+def _bucket_genres(books: list, genres_by_key: dict, *, allow_generic: bool) -> tuple:
     counter: dict = {}
     uncategorized = 0
     for b in books:
-        cats = genres_by_isbn.get(b.isbn, []) if b.isbn else []
+        cats = genres_by_key.get(_book_key(b), [])
         book_buckets: set = set()
         for cat in cats:
             parts = [p.strip() for p in cat.split(" / ") if p.strip()]
@@ -365,20 +404,6 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
 
     _draw_footer(fig, stats)
 
-    # Rounded accent border, drawn last so it sits cleanly on top of any
-    # other figure content.
-    border = FancyBboxPatch(
-        (0.025, 0.02), 0.95, 0.96,
-        boxstyle="round,pad=0,rounding_size=0.025",
-        linewidth=2,
-        edgecolor=COLOR_BORDER,
-        facecolor="none",
-        transform=fig.transFigure,
-        zorder=1000,
-        clip_on=False,
-    )
-    fig.add_artist(border)
-
     fig.savefig(path, dpi=fmt["dpi"], facecolor=COLOR_PAGE_BG)
     plt.close(fig)
 
@@ -409,7 +434,8 @@ def _draw_section_cards(fig, gs) -> None:
         card = FancyBboxPatch(
             (x0, y0), w, h,
             boxstyle="round,pad=0,rounding_size=0.012",
-            linewidth=0,
+            linewidth=0.7,
+            edgecolor=COLOR_CARD_EDGE,
             facecolor=COLOR_CARD_BG,
             transform=fig.transFigure,
             zorder=0,
@@ -459,15 +485,15 @@ def _draw_hero(ax, stats: Stats):
                 transform=ax.transAxes)
         return
 
-    # Hero stat: bigger than body type but not dominating; the charts are
-    # the focus. Color is reserved for charts; size carries the emphasis.
-    ax.text(0.5, 0.72, f"{stats.total_books:,}",
+    # Hero stat — restrained. Charts are the focus; the count is supporting
+    # editorial info, not the headline.
+    ax.text(0.5, 0.65, f"{stats.total_books:,}",
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=48, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=32, fontweight="bold",
             transform=ax.transAxes)
-    ax.text(0.5, 0.30, "books finished",
+    ax.text(0.5, 0.27, "books finished",
             ha="center", va="center",
-            color=COLOR_TEXT_BODY, fontsize=12, fontweight="semibold",
+            color=COLOR_TEXT_BODY, fontsize=11, fontweight="semibold",
             transform=ax.transAxes)
 
 
@@ -619,61 +645,76 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     visible = titles[:list_max]
     n_lines = len(visible) + (1 if truncated else 0)
 
-    # Larger type than before — the list is the longest section, it should
-    # read comfortably. The longest title+author should reach close to the
-    # right-hand date column.
-    if n_lines <= 6:
-        font_size = 16
-    elif n_lines <= 12:
-        font_size = 15
-    elif n_lines <= 18:
-        font_size = 14
-    elif n_lines <= 28:
+    # Type sizes tuned so the longest title+author still leaves room for
+    # the right-aligned date column without colliding with it.
+    if n_lines <= 8:
         font_size = 13
-    else:
+    elif n_lines <= 14:
+        font_size = 12
+    elif n_lines <= 22:
         font_size = 11
+    elif n_lines <= 32:
+        font_size = 10
+    else:
+        font_size = 9
 
-    available = 0.96
-    line_height = max(0.060, available / max(n_lines, 1))
-    start_y = 0.97
+    available = 0.94
+    line_height = max(0.070, available / max(n_lines, 1))
+    start_y = 0.95
+    # Reserve the rightmost slice of the row for the date column. Author
+    # text is truncated post-render if it would extend into this band.
+    date_col_left = 0.84
 
     # Three text artists per book: bold title (left), author (regular,
-    # positioned flush after title via bbox measurement), date (right-aligned
-    # in muted color, far right column). The right-aligned date column gives
-    # the list an editorial table feel rather than a wall of bullet text.
+    # positioned flush after title via bbox measurement), date (right-
+    # aligned, muted, in its reserved right column).
     title_artists = []
     for i, (date, title, author) in enumerate(visible):
         y = start_y - (i + 1) * line_height
         if y < 0.0:
             break
-        clipped_title = title if len(title) <= 70 else title[:69] + "…"
+        clipped_title = title if len(title) <= 50 else title[:49] + "…"
         t_title = ax.text(0.0, y, clipped_title,
                           ha="left", va="top",
                           color=COLOR_TEXT_HIGH, fontsize=font_size, fontweight="bold",
                           transform=ax.transAxes)
-        suffix = f"   {author}"
-        ax.text(1.0, y, date.strftime("%b %Y"),
+        date_str = _short_month_label(date.strftime("%b %Y"))
+        ax.text(1.0, y, date_str,
                 ha="right", va="top",
                 color=COLOR_TEXT_MUTED, fontsize=font_size, fontweight="normal",
                 transform=ax.transAxes)
-        title_artists.append((t_title, y, suffix))
+        title_artists.append((t_title, y, author))
 
     if truncated:
         i = len(visible)
         y = start_y - (i + 1) * line_height
-        if y >= 0.02:
+        if y >= 0.0:
             ax.text(0.0, y, f"…and {len(titles) - list_max} more",
                     ha="left", va="top",
                     color=COLOR_TEXT_MUTED, fontsize=font_size, fontstyle="italic",
                     transform=ax.transAxes)
 
-    # Second pass: position the author flush after each bold title using the
-    # rendered bbox of the title artist.
+    # Second pass: place the author flush after the bold title, dynamically
+    # truncated if it would otherwise spill into the date column.
     ax.figure.canvas.draw()
     inv = ax.transAxes.inverted()
-    for t, y, suffix in title_artists:
+    for t, y, author in title_artists:
         bbox = t.get_window_extent()
         x_end_axes, _ = inv.transform((bbox.x1, bbox.y0))
+        # Estimate available width in characters before the date column
+        # (rough but fine in practice; we err toward truncating).
+        gap_axes = max(0.0, date_col_left - x_end_axes - 0.012)
+        # Approximate axes-fraction-per-char at this font size, derived
+        # from the rendered title bbox.
+        title_w_axes = x_end_axes  # title was drawn from x=0
+        chars_in_title = max(1, len(t.get_text()))
+        per_char = title_w_axes / chars_in_title if chars_in_title else 0.012
+        per_char = max(per_char, 0.006)  # floor so author isn't over-truncated
+        max_author_chars = max(0, int(gap_axes / per_char) - 2)  # 2-char buffer for the leading gap
+        if max_author_chars <= 0:
+            continue
+        author_text = author if len(author) <= max_author_chars else author[: max(2, max_author_chars - 1)] + "…"
+        suffix = "   " + author_text
         ax.text(x_end_axes, y, suffix,
                 ha="left", va="top",
                 color=COLOR_TEXT_BODY, fontsize=font_size, fontweight="normal",
