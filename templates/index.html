@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Goodreads Tools</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+</head>
+<body>
+  <main class="panel">
+    <h1>Goodreads Tools</h1>
+    <p class="subtitle">Local utilities for syncing and visualizing your reading.</p>
+
+    <section class="actions">
+      <button id="sync-btn" class="action">
+        <span class="action-title">Sync to StoryGraph</span>
+        <span class="action-sub">Push recent ratings to StoryGraph (opens Chrome).</span>
+      </button>
+      <button id="stats-btn" class="action">
+        <span class="action-title">Generate Year in Books</span>
+        <span class="action-sub">Render the last 12 months of reading as PDF and PNG.</span>
+      </button>
+    </section>
+
+    <section id="status-section" class="status hidden">
+      <div class="status-header">
+        <h2 id="status-title">Status</h2>
+        <span id="status-pill" class="pill"></span>
+      </div>
+      <pre id="log-area" class="log hidden"></pre>
+      <div id="stats-result" class="result hidden"></div>
+      <div id="downloads" class="downloads hidden"></div>
+    </section>
+
+    <p class="footnote">Runs locally on 127.0.0.1. Configure your Goodreads user ID in <code>config.json</code>.</p>
+  </main>
+
+  <script>
+    const syncBtn = document.getElementById("sync-btn");
+    const statsBtn = document.getElementById("stats-btn");
+    const statusSection = document.getElementById("status-section");
+    const statusTitle = document.getElementById("status-title");
+    const statusPill = document.getElementById("status-pill");
+    const logArea = document.getElementById("log-area");
+    const statsResult = document.getElementById("stats-result");
+    const downloads = document.getElementById("downloads");
+
+    function show(el)  { el.classList.remove("hidden"); }
+    function hide(el)  { el.classList.add("hidden"); }
+    function reveal()  { show(statusSection); }
+
+    function setPill(text, kind) {
+      statusPill.textContent = text;
+      statusPill.className = "pill " + (kind || "");
+    }
+
+    function resetStatusUI() {
+      hide(logArea); logArea.textContent = "";
+      hide(statsResult); statsResult.innerHTML = "";
+      hide(downloads); downloads.innerHTML = "";
+    }
+
+    async function postJSON(url) {
+      const r = await fetch(url, { method: "POST", headers: { "Accept": "application/json" }});
+      const data = await r.json().catch(() => ({}));
+      return { ok: r.ok, status: r.status, data };
+    }
+
+    // --- sync ---
+
+    syncBtn.addEventListener("click", async () => {
+      reveal();
+      resetStatusUI();
+      statusTitle.textContent = "Sync to StoryGraph";
+      setPill("Starting…", "running");
+      show(logArea);
+
+      syncBtn.disabled = true;
+      statsBtn.disabled = true;
+
+      const res = await postJSON("/sync");
+      if (!res.ok) {
+        const msg = (res.data && res.data.error) || ("HTTP " + res.status);
+        setPill("Failed", "failed");
+        logArea.textContent = msg + "\n";
+        syncBtn.disabled = false;
+        statsBtn.disabled = false;
+        return;
+      }
+
+      const runId = res.data.run_id;
+      setPill("Running", "running");
+      let offset = 0;
+
+      while (true) {
+        await new Promise(r => setTimeout(r, 2000));
+        let logRes;
+        try {
+          logRes = await fetch(`/sync-log/${runId}?offset=${offset}`).then(r => r.json());
+        } catch (e) {
+          // keep polling; transient errors shouldn't stop the loop
+          continue;
+        }
+        if (logRes.text) {
+          logArea.textContent += logRes.text;
+          logArea.scrollTop = logArea.scrollHeight;
+        }
+        offset = logRes.next_offset;
+        if (logRes.status === "done") {
+          setPill("Done", "done");
+          break;
+        }
+        if (logRes.status === "failed") {
+          setPill("Failed (exit " + logRes.exit_code + ")", "failed");
+          break;
+        }
+      }
+
+      syncBtn.disabled = false;
+      statsBtn.disabled = false;
+    });
+
+    // --- stats ---
+
+    statsBtn.addEventListener("click", async () => {
+      reveal();
+      resetStatusUI();
+      statusTitle.textContent = "Year in Books";
+      setPill("Generating…", "running");
+
+      syncBtn.disabled = true;
+      statsBtn.disabled = true;
+
+      const res = await postJSON("/generate-stats");
+      syncBtn.disabled = false;
+      statsBtn.disabled = false;
+
+      if (!res.ok) {
+        const msg = (res.data && res.data.error) || ("HTTP " + res.status);
+        setPill("Failed", "failed");
+        statsResult.textContent = msg;
+        show(statsResult);
+        return;
+      }
+
+      const d = res.data;
+      setPill("Done", "done");
+      const missing = d.books_missing_pages
+        ? ` (${d.books_missing_pages} without page count)`
+        : "";
+      statsResult.innerHTML = `
+        <strong>${d.total_books.toLocaleString()}</strong> books,
+        <strong>${d.total_pages.toLocaleString()}</strong> pages
+        in the last 12 months${missing}.
+      `;
+      show(statsResult);
+
+      const links = [
+        ["PDF", d.downloads.pdf],
+        ["Web PNG", d.downloads.web],
+        ["Social PNG", d.downloads.social],
+      ].filter(([_, url]) => !!url);
+
+      downloads.innerHTML = links.map(([label, url]) =>
+        `<a class="download" href="${url}" download>${label}</a>`
+      ).join("");
+      show(downloads);
+    });
+  </script>
+</body>
+</html>

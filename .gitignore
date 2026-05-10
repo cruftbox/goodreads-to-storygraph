@@ -16,6 +16,7 @@ venv/
 # Runtime artifacts
 sync_log.txt
 *.png
+output/
 
 # Local credentials override (config.json is checked in with placeholders;
 # if you want to actually exclude real credentials, rename the committed

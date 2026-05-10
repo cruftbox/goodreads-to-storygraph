@@ -23,10 +23,7 @@ cd goodreads-sync
 
 2. Install required Python packages:
 ```bash
-pip install selenium==4.16.0
-pip install requests==2.31.0
-pip install beautifulsoup4==4.12.3
-pip install lxml==5.1.0
+pip install -r requirements.txt
 ```
 
 ## File Structure
@@ -67,6 +64,26 @@ cd goodreads-sync
 ```bash
 python book_sync.py
 ```
+
+## Web UI (optional)
+
+Instead of running `book_sync.py` directly, you can launch a small local web frontend that wraps the sync and adds a second feature for visualizing the last 12 months of reading.
+
+```bash
+python app.py
+```
+
+This opens `http://127.0.0.1:5000` in your browser with two buttons:
+
+- **Sync to StoryGraph** — runs `book_sync.py` as a subprocess. Chrome opens exactly as today and the log streams to the page.
+- **Generate Year in Books** — fetches your Goodreads read shelf and renders a one-page visualization in three formats:
+  - `output/year_in_books.pdf` — Letter portrait, vector
+  - `output/year_in_books_web.png` — 1200×1800
+  - `output/year_in_books_social.png` — 1080×1920, sized for Instagram Stories
+
+The Year in Books feature uses the public Goodreads RSS for your read shelf and the Google Books API for genre data. No additional credentials are needed beyond the `goodreads_user_id` already in `config.json`.
+
+The server binds to `127.0.0.1` only — it isn't reachable from other machines on your network. Generated files in `output/` are gitignored.
 
 ## What to Expect
 
