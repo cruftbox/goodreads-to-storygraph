@@ -134,6 +134,7 @@ class Book:
     num_pages: Optional[int]
     user_read_at: datetime
     user_rating: Optional[int]
+    goodreads_book_id: Optional[str] = None
 
 
 @dataclass
@@ -220,6 +221,15 @@ def _parse_item(item) -> Book:
         raise ValueError("no usable date")
     user_read_at = datetime.strptime(read_at_text, "%a, %d %b %Y %H:%M:%S %z").astimezone()
 
+    # Pull the Goodreads book ID for the optional page-scrape genre fallback.
+    book_id = _text(item.find("book_id")) or None
+    if not book_id:
+        book_elem = item.find("book")
+        if book_elem is not None:
+            attr_id = book_elem.get("id")
+            if attr_id and attr_id.strip():
+                book_id = attr_id.strip()
+
     return Book(
         title=title,
         author=author,
@@ -227,6 +237,7 @@ def _parse_item(item) -> Book:
         num_pages=num_pages,
         user_read_at=user_read_at,
         user_rating=user_rating,
+        goodreads_book_id=book_id,
     )
 
 
@@ -297,16 +308,17 @@ def _month_buckets_ending_at(today: datetime, n: int) -> list:
 # -------- genres --------
 
 def lookup_genres(books: list, cache_path: Path, timeout: int = 10) -> dict:
-    """Look up Google Books categories for each book. Strategy:
+    """Look up genre/category data for each book. Strategy:
 
-    1. If the book has an ISBN, query by ISBN first.
-    2. If the result is empty *or* contains only generic top-level
-       categories ("Fiction" alone, etc.), retry with a title+author query —
-       it sometimes resolves to a richer volume record than the ISBN match.
-    3. If the book has no ISBN at all, go straight to title+author.
+    1. If the book has an ISBN, query Google Books by ISBN.
+    2. If that returned nothing or only generic top-levels, try Google
+       Books with a title+author query.
+    3. If still nothing useful and we have a Goodreads book ID from the
+       RSS, scrape the Goodreads book page for crowd-sourced genres.
 
-    Cached by a synthetic key that distinguishes ISBN entries (raw ISBN
-    string) from title/author entries (prefixed "ta:").
+    A cached entry that's empty or only-generic is treated as stale so a
+    re-run benefits from the new fallback chain even if older Google-only
+    cache data is on disk.
     """
     cache = _load_cache(cache_path)
     seen = set()
@@ -315,7 +327,7 @@ def lookup_genres(books: list, cache_path: Path, timeout: int = 10) -> dict:
         if not key or key in seen:
             continue
         seen.add(key)
-        if key in cache:
+        if key in cache and cache[key] and not _is_only_generic(cache[key]):
             continue
         try:
             cats: list = []
@@ -328,7 +340,11 @@ def lookup_genres(books: list, cache_path: Path, timeout: int = 10) -> dict:
                 if ta_cats and not _is_only_generic(ta_cats):
                     cats = ta_cats
                 elif not cats:
-                    cats = ta_cats  # at least save what we got
+                    cats = ta_cats
+            if (not cats or _is_only_generic(cats)) and b.goodreads_book_id:
+                gr_cats = _query_goodreads_genres(b.goodreads_book_id, timeout=timeout)
+                if gr_cats:
+                    cats = gr_cats
             cache[key] = cats
         except Exception as e:
             logging.warning("Genre lookup failed for %s: %s", key, e)
@@ -397,6 +413,89 @@ def _extract_categories_from_response(response) -> list:
         return []
     info = data["items"][0].get("volumeInfo", {})
     return list(info.get("categories") or [])
+
+
+# Module-level rate gate so we don't hammer Goodreads with parallel requests
+# from a fast-running render. Single-threaded today, but this keeps us
+# polite if anything ever calls into here concurrently.
+_GR_REQUEST_DELAY_SEC = 0.4
+_GR_LAST_REQUEST_AT = 0.0
+
+
+def _query_goodreads_genres(book_id: str, timeout: int = 15) -> list:
+    """Scrape the Goodreads book page for crowd-sourced genre tags. Returns
+    a list of genre name strings (e.g., ["Fantasy", "Epic Fantasy"]) or an
+    empty list if the page can't be parsed."""
+    import time as _time
+
+    global _GR_LAST_REQUEST_AT
+    delta = _time.time() - _GR_LAST_REQUEST_AT
+    if delta < _GR_REQUEST_DELAY_SEC:
+        _time.sleep(_GR_REQUEST_DELAY_SEC - delta)
+    _GR_LAST_REQUEST_AT = _time.time()
+
+    url = f"https://www.goodreads.com/book/show/{book_id}"
+    response = requests.get(
+        url,
+        headers={"User-Agent": USER_AGENT},
+        timeout=timeout,
+        allow_redirects=True,
+    )
+    if response.status_code != 200:
+        return []
+    return _extract_goodreads_genres(response.text)
+
+
+def _extract_goodreads_genres(html: str) -> list:
+    """Two-pattern extractor for Goodreads' genre tags. Tries the classic
+    HTML pattern first, then walks the React __NEXT_DATA__ JSON blob for
+    Genre objects. Returns deduped names in insertion order."""
+    import re as _re
+
+    soup = BeautifulSoup(html, "html.parser")
+
+    found: list = []
+    seen: set = set()
+
+    def add(name: str) -> None:
+        n = (name or "").strip()
+        if not n or n.lower() in {"...more", "more"} or n in seen:
+            return
+        seen.add(n)
+        found.append(n)
+
+    # Pattern 1: anchor links to /genres/* — works on classic and many
+    # current Goodreads pages.
+    for a in soup.find_all("a", href=_re.compile(r"^/genres/")):
+        text = a.get_text(strip=True)
+        if text and len(text) <= 40:
+            add(text)
+
+    if found:
+        return found[:15]
+
+    # Pattern 2: React __NEXT_DATA__ JSON blob. Genre objects look like
+    # {"__typename": "Genre", "name": "Fantasy", ...} nested in the apollo
+    # cache. Walk the whole blob and harvest names.
+    next_script = soup.find("script", id="__NEXT_DATA__")
+    if next_script and next_script.string:
+        try:
+            blob = json.loads(next_script.string)
+        except json.JSONDecodeError:
+            blob = None
+        if blob is not None:
+            def visit(obj):
+                if isinstance(obj, dict):
+                    if obj.get("__typename") == "Genre" and obj.get("name"):
+                        add(obj["name"])
+                    for v in obj.values():
+                        visit(v)
+                elif isinstance(obj, list):
+                    for v in obj:
+                        visit(v)
+            visit(blob)
+
+    return found[:15]
 
 
 def _load_cache(path: Path) -> dict:
