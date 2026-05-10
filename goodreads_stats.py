@@ -48,6 +48,16 @@ GENRE_PALETTE = [
     "#ffd166", "#5fa8d3", "#bcbcbc",
 ]
 
+# BISAC top-level categories that are too generic to be useful as a genre bucket.
+# When Google Books returns ONLY one of these for a book (no subcategory), we
+# treat that book as having no genre data rather than dumping it into a giant
+# "Fiction" bar that swamps the chart.
+GENERIC_TOP_LEVELS = frozenset({
+    "Fiction", "Nonfiction", "Non-Fiction",
+    "Juvenile Fiction", "Juvenile Nonfiction",
+    "Young Adult Fiction", "Young Adult Nonfiction",
+})
+
 OUTPUT_FORMATS = [
     {"name": "pdf",    "filename": "year_in_books.pdf",        "size_in": (8.5, 11.0),       "dpi": 100, "list_max": 50},
     {"name": "web",    "filename": "year_in_books_web.png",    "size_in": (8.0, 12.0),       "dpi": 150, "list_max": 50},
@@ -241,24 +251,27 @@ def _save_cache(path: Path, cache: dict) -> None:
 def aggregate_genres(books: list, genres_by_isbn: dict) -> tuple:
     """Return (top_items, uncategorized_count).
 
-    top_items is a list of (label, count) sorted by count desc, max 7.
-    Categories beyond the top 6 are rolled into "Other" if non-empty.
+    Per book: collect the set of distinct sub-genre buckets it contributes to
+    (using BISAC second level when present, first level when specific enough,
+    skipping generic top-levels like "Fiction" alone). A book contributes 1 to
+    each unique bucket it has — never multiple counts for the same bucket per
+    book. Books with no usable bucket count as uncategorized.
     """
     counter: dict = {}
     uncategorized = 0
     for b in books:
         cats = genres_by_isbn.get(b.isbn, []) if b.isbn else []
-        if not cats:
-            uncategorized += 1
-            continue
+        book_buckets: set = set()
         for cat in cats:
             parts = [p.strip() for p in cat.split(" / ") if p.strip()]
             if len(parts) >= 2:
-                bucket = parts[1]
-            elif parts:
-                bucket = parts[0]
-            else:
-                continue
+                book_buckets.add(parts[1])
+            elif parts and parts[0] not in GENERIC_TOP_LEVELS:
+                book_buckets.add(parts[0])
+        if not book_buckets:
+            uncategorized += 1
+            continue
+        for bucket in book_buckets:
             counter[bucket] = counter.get(bucket, 0) + 1
 
     if not counter:
@@ -295,7 +308,7 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     gs = GridSpec(
         nrows=6, ncols=1,
         figure=fig,
-        left=0.18, right=0.94, top=0.94, bottom=0.04,
+        left=0.21, right=0.95, top=0.94, bottom=0.04,
         height_ratios=[0.45, 0.5, 1.3, 1.3, 1.3, 2.6],
         hspace=0.55,
     )
@@ -369,10 +382,11 @@ def _draw_summary(ax, stats: Stats):
 
 def _draw_bar_chart(ax, data: list, color: str, title: str):
     ax.set_facecolor(COLOR_PANEL_BG)
-    labels = [d[0] for d in data]
+    labels = [_short_month_label(d[0]) for d in data]
     values = [d[1] for d in data]
-    short_labels = [lab.split(" ")[0][:3] for lab in labels]
-    ax.bar(short_labels, values, color=color, width=0.7)
+    x = list(range(len(data)))
+    ax.bar(x, values, color=color, width=0.7)
+    ax.set_xticks(x, labels=labels)
     ax.set_title(title, color=COLOR_TITLE, fontsize=12, fontweight="bold", pad=8, loc="left")
     ax.tick_params(colors=COLOR_BODY, labelsize=8)
     for s in ("top", "right"):
@@ -381,6 +395,15 @@ def _draw_bar_chart(ax, data: list, color: str, title: str):
         ax.spines[s].set_color(COLOR_MUTED)
     ax.yaxis.grid(True, color=COLOR_GRID, linewidth=0.5)
     ax.set_axisbelow(True)
+
+
+def _short_month_label(full_label: str) -> str:
+    """'Jun 2025' -> 'Jun '25'. Always include the year so the 12-month
+    window's December-to-January transition is unambiguous."""
+    parts = full_label.split(" ")
+    if len(parts) == 2 and len(parts[1]) == 4:
+        return f"{parts[0]} '{parts[1][2:]}"
+    return full_label
 
 
 def _draw_genres(ax, genre_data, stats: Stats):
@@ -398,7 +421,7 @@ def _draw_genres(ax, genre_data, stats: Stats):
                 transform=ax.transAxes)
         return
 
-    labels = [_truncate_label(it[0], 22) for it in items]
+    labels = [_truncate_label(it[0], 18) for it in items]
     values = [it[1] for it in items]
     colors = [GENRE_PALETTE[i % len(GENRE_PALETTE)] for i in range(len(items))]
     y_positions = list(range(len(items)))
@@ -433,34 +456,60 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
 
     truncated = len(titles) > list_max
     visible = titles[:list_max]
-    lines = [_format_book_line(date, title, author) for date, title, author in visible]
-    if truncated:
-        lines.append(f"…and {len(titles) - list_max} more")
+    n_lines = len(visible) + (1 if truncated else 0)
 
-    n = len(lines)
-    if n <= 12:
+    if n_lines <= 10:
+        font_size = 11
+    elif n_lines <= 20:
         font_size = 10
-    elif n <= 24:
+    elif n_lines <= 30:
         font_size = 9
-    elif n <= 36:
-        font_size = 8
     else:
-        font_size = 7
+        font_size = 8
 
-    line_height = 1.0 / (n + 1)
-    for i, line in enumerate(lines):
-        y = 0.95 - (i + 1) * line_height
+    # Reserve top 0.07 for the section title; distribute the rest.
+    available = 0.90
+    # Floor on line height so the list never feels cramped on a short list.
+    line_height = max(0.055, available / max(n_lines, 1))
+    start_y = 0.92
+
+    # First pass: render the bullet + title in bold for every line. Capture
+    # the artists so we can measure their widths and place the author/date
+    # suffix to their right in regular weight.
+    title_artists = []
+    for i, (date, title, author) in enumerate(visible):
+        y = start_y - (i + 1) * line_height
         if y < 0.02:
             break
-        ax.text(0.02, y, "• " + line,
+        truncated_title = title if len(title) <= 55 else title[:54] + "…"
+        t = ax.text(0.02, y, f"•  {truncated_title}",
+                    ha="left", va="top",
+                    color=COLOR_TITLE, fontsize=font_size, fontweight="bold",
+                    transform=ax.transAxes)
+        suffix = f"   — {author}   ({date.strftime('%b %Y')})"
+        title_artists.append((t, y, suffix))
+
+    if truncated:
+        i = len(visible)
+        y = start_y - (i + 1) * line_height
+        if y >= 0.02:
+            ax.text(0.02, y, f"…and {len(titles) - list_max} more",
+                    ha="left", va="top",
+                    color=COLOR_MUTED, fontsize=font_size, fontstyle="italic",
+                    transform=ax.transAxes)
+
+    # Second pass: now that we've drawn the bold titles, ask matplotlib for
+    # their rendered widths so the suffix lines up flush after each one
+    # instead of being column-aligned.
+    ax.figure.canvas.draw()
+    inv = ax.transAxes.inverted()
+    for t, y, suffix in title_artists:
+        bbox = t.get_window_extent()
+        x_end_axes, _ = inv.transform((bbox.x1, bbox.y0))
+        ax.text(x_end_axes, y, suffix,
                 ha="left", va="top",
-                color=COLOR_BODY, fontsize=font_size,
+                color=COLOR_BODY, fontsize=font_size, fontweight="normal",
                 transform=ax.transAxes)
-
-
-def _format_book_line(date: datetime, title: str, author: str) -> str:
-    truncated_title = title if len(title) <= 60 else title[:57] + "…"
-    return f"{truncated_title} — {author}  ({date.strftime('%b %Y')})"
 
 
 def _truncate_label(s: str, max_len: int) -> str:
