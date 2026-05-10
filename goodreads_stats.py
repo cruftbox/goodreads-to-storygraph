@@ -48,10 +48,11 @@ GOODREADS_RSS_URL = "https://www.goodreads.com/review/list_rss/{user_id}?shelf=r
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
 USER_AGENT = "Mozilla/5.0 (compatible; goodreads-to-storygraph/1.0)"
 
-# Refined dark palette. Background and panel both dark with a slight cool
-# tint; type weights carry the hierarchy instead of color noise.
-COLOR_PAGE_BG = "#0f1218"
-COLOR_PANEL_BG = "#171b24"
+# Refined dark palette. Page sits darkest; section "cards" sit slightly
+# elevated above it for delineation. Axes facecolors match the card color.
+COLOR_PAGE_BG = "#0d1016"
+COLOR_CARD_BG = "#1a1f2c"
+COLOR_PANEL_BG = COLOR_CARD_BG  # axes facecolors should match cards
 COLOR_BORDER = "#6ba8e8"
 
 COLOR_TEXT_HIGH = "#f4f5f9"   # large/bold/heading text
@@ -274,28 +275,22 @@ def _save_cache(path: Path, cache: dict) -> None:
 def aggregate_genres(books: list, genres_by_isbn: dict) -> tuple:
     """Return (top_items, uncategorized_count).
 
-    Per book: collect the set of distinct sub-genre buckets it contributes to
-    (using BISAC second level when present, first level when specific enough,
-    skipping generic top-levels like "Fiction" alone). A book contributes 1 to
-    each unique bucket it has — never multiple counts for the same bucket per
-    book. Books with no usable bucket count as uncategorized.
+    Per book: collect distinct sub-genre buckets (BISAC second level when
+    present, otherwise first level). A book contributes 1 to each unique
+    bucket it has — never multiple counts for the same bucket per book.
+    Books that returned no categories from Google Books at all count as
+    uncategorized.
+
+    First pass tries to use only specific buckets (skipping generic
+    top-levels like "Fiction" alone). If that yields nothing, falls back
+    to using the generic top-levels too — better to show "Fiction" than
+    to show "Genre data unavailable" when Google Books only returned
+    coarse categories for every book.
     """
-    counter: dict = {}
-    uncategorized = 0
-    for b in books:
-        cats = genres_by_isbn.get(b.isbn, []) if b.isbn else []
-        book_buckets: set = set()
-        for cat in cats:
-            parts = [p.strip() for p in cat.split(" / ") if p.strip()]
-            if len(parts) >= 2:
-                book_buckets.add(parts[1])
-            elif parts and parts[0] not in GENERIC_TOP_LEVELS:
-                book_buckets.add(parts[0])
-        if not book_buckets:
-            uncategorized += 1
-            continue
-        for bucket in book_buckets:
-            counter[bucket] = counter.get(bucket, 0) + 1
+    counter, uncategorized = _bucket_genres(books, genres_by_isbn, allow_generic=False)
+    if not counter:
+        # Try again allowing generic top-levels — last-resort fallback.
+        counter, uncategorized = _bucket_genres(books, genres_by_isbn, allow_generic=True)
 
     if not counter:
         return ([], uncategorized)
@@ -312,6 +307,27 @@ def aggregate_genres(books: list, genres_by_isbn: dict) -> tuple:
     return (items, uncategorized)
 
 
+def _bucket_genres(books: list, genres_by_isbn: dict, *, allow_generic: bool) -> tuple:
+    counter: dict = {}
+    uncategorized = 0
+    for b in books:
+        cats = genres_by_isbn.get(b.isbn, []) if b.isbn else []
+        book_buckets: set = set()
+        for cat in cats:
+            parts = [p.strip() for p in cat.split(" / ") if p.strip()]
+            if len(parts) >= 2:
+                book_buckets.add(parts[1])
+            elif parts:
+                if allow_generic or parts[0] not in GENERIC_TOP_LEVELS:
+                    book_buckets.add(parts[0])
+        if not book_buckets:
+            uncategorized += 1
+            continue
+        for bucket in book_buckets:
+            counter[bucket] = counter.get(bucket, 0) + 1
+    return counter, uncategorized
+
+
 # -------- render --------
 
 def render_visual(stats: Stats, genre_data: tuple, output_dir: Path) -> dict:
@@ -326,29 +342,27 @@ def render_visual(stats: Stats, genre_data: tuple, output_dir: Path) -> dict:
 
 
 def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
-    fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PANEL_BG)
+    fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PAGE_BG)
 
-    # Five-section vertical layout. Generous outer margins and section gaps
-    # do most of the breathing-room work; height_ratios tune relative weight.
     gs = GridSpec(
         nrows=5, ncols=1,
         figure=fig,
         left=0.09, right=0.91, top=0.93, bottom=0.06,
-        height_ratios=[0.95, 1.20, 1.70, 1.50, 2.60],
-        hspace=0.55,
+        height_ratios=[0.85, 1.20, 1.80, 1.50, 2.80],
+        hspace=0.65,
     )
+
+    # Card backgrounds drawn first so they sit behind every chart artist.
+    _draw_section_cards(fig, gs)
 
     _draw_title(fig.add_subplot(gs[0]), stats)
     _draw_hero(fig.add_subplot(gs[1]), stats)
     _draw_combined_chart(fig.add_subplot(gs[2]), stats)
     genre_ax = fig.add_subplot(gs[3])
     _draw_genres(genre_ax, genre_data, stats)
-    # Genre labels need more horizontal headroom than the bar charts; nudge
-    # this one subplot's left edge right so long labels don't clip.
     _set_subplot_left(genre_ax, 0.22)
     _draw_book_list(fig.add_subplot(gs[4]), stats, list_max=fmt["list_max"])
 
-    _draw_section_dividers(fig, gs)
     _draw_footer(fig, stats)
 
     # Rounded accent border, drawn last so it sits cleanly on top of any
@@ -365,7 +379,7 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     )
     fig.add_artist(border)
 
-    fig.savefig(path, dpi=fmt["dpi"], facecolor=COLOR_PANEL_BG)
+    fig.savefig(path, dpi=fmt["dpi"], facecolor=COLOR_PAGE_BG)
     plt.close(fig)
 
 
@@ -377,24 +391,30 @@ def _set_subplot_left(ax, new_left: float) -> None:
     ax.set_position([new_left, pos.y0, pos.x1 - new_left, pos.height])
 
 
-def _draw_section_dividers(fig, gs) -> None:
-    """Hairline horizontal dividers between sections — the editorial-grid feel
-    that ties the layout together visually."""
+def _draw_section_cards(fig, gs) -> None:
+    """Draw a slightly elevated 'card' behind each gridspec row so the
+    sections are visually delineated against the darker page background."""
     n = gs.get_geometry()[0]
-    for i in range(n - 1):
-        # Pull the bottom of section i and the top of section i+1; place the
-        # hairline halfway between them so it sits in the gap, not against a
-        # text baseline.
-        top_pos = gs[i].get_position(fig)
-        bottom_pos = gs[i + 1].get_position(fig)
-        y = (top_pos.y0 + bottom_pos.y1) / 2
-        line = plt.Line2D(
-            [0.10, 0.90], [y, y],
+    for i in range(n):
+        pos = gs[i].get_position(fig)
+        # Generous bleed around each section, especially upward to cover the
+        # section title area that lives in the gridspec's title pad.
+        margin_x = 0.02
+        margin_y_top = 0.030
+        margin_y_bottom = 0.012
+        x0 = pos.x0 - margin_x
+        y0 = pos.y0 - margin_y_bottom
+        w = (pos.x1 + margin_x) - x0
+        h = (pos.y1 + margin_y_top) - y0
+        card = FancyBboxPatch(
+            (x0, y0), w, h,
+            boxstyle="round,pad=0,rounding_size=0.012",
+            linewidth=0,
+            facecolor=COLOR_CARD_BG,
             transform=fig.transFigure,
-            color=COLOR_DIVIDER, linewidth=0.6,
-            zorder=1,
+            zorder=0,
         )
-        fig.add_artist(line)
+        fig.add_artist(card)
 
 
 def _draw_footer(fig, stats: Stats) -> None:
@@ -439,56 +459,35 @@ def _draw_hero(ax, stats: Stats):
                 transform=ax.transAxes)
         return
 
-    # Hero: very large books count, plain white. Color is reserved for charts;
-    # the hero leads with size, not hue.
-    ax.text(0.5, 0.78, f"{stats.total_books:,}",
+    # Hero stat: bigger than body type but not dominating; the charts are
+    # the focus. Color is reserved for charts; size carries the emphasis.
+    ax.text(0.5, 0.72, f"{stats.total_books:,}",
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=72, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=48, fontweight="bold",
             transform=ax.transAxes)
-    ax.text(0.5, 0.36, "books finished",
+    ax.text(0.5, 0.30, "books finished",
             ha="center", va="center",
             color=COLOR_TEXT_BODY, fontsize=12, fontweight="semibold",
             transform=ax.transAxes)
 
-    # Secondary stat — pages, on its own line
-    sub = f"{stats.total_pages:,} pages"
-    if stats.books_missing_pages > 0:
-        plural = "s" if stats.books_missing_pages != 1 else ""
-        sub += f"   ·   {stats.books_missing_pages} book{plural} without page count"
-    ax.text(0.5, 0.10, sub,
-            ha="center", va="center",
-            color=COLOR_TEXT_MUTED, fontsize=10,
-            transform=ax.transAxes)
-
 
 def _draw_combined_chart(ax, stats: Stats):
-    """Dual-axis line chart: books (left, blue) and pages (right, amber).
-    One chart instead of two stacked bars — saves vertical space and lets
-    the eye correlate the two series month-over-month."""
+    """Books-per-month line chart with a subtle filled area under the line.
+    Highlights the peak month with an inline annotation."""
     months = [_short_month_label(m[0]) for m in stats.books_per_month]
     books_values = [m[1] for m in stats.books_per_month]
-    pages_values = [m[1] for m in stats.pages_per_month]
     x = list(range(len(months)))
 
-    ax.set_facecolor(COLOR_PANEL_BG)
+    ax.set_facecolor(COLOR_CARD_BG)
 
-    # Books series: subtle filled area under the line for visual weight.
-    ax.fill_between(x, books_values, color=COLOR_BOOKS, alpha=0.10, zorder=1)
-    ax.plot(x, books_values, color=COLOR_BOOKS, linewidth=2.2,
-            marker="o", markersize=5, markerfacecolor=COLOR_BOOKS,
-            markeredgecolor=COLOR_PANEL_BG, markeredgewidth=1.5,
-            zorder=3, label="Books")
+    ax.fill_between(x, books_values, color=COLOR_BOOKS, alpha=0.14, zorder=1)
+    ax.plot(x, books_values, color=COLOR_BOOKS, linewidth=2.4,
+            marker="o", markersize=5.5, markerfacecolor=COLOR_BOOKS,
+            markeredgecolor=COLOR_CARD_BG, markeredgewidth=1.5,
+            zorder=3)
 
-    # Pages on the secondary y-axis.
-    ax2 = ax.twinx()
-    ax2.set_facecolor(COLOR_PANEL_BG)
-    ax2.plot(x, pages_values, color=COLOR_PAGES, linewidth=2.2,
-             marker="o", markersize=5, markerfacecolor=COLOR_PAGES,
-             markeredgecolor=COLOR_PANEL_BG, markeredgewidth=1.5,
-             zorder=3, label="Pages")
-
-    # Annotate the peak books month — single highlighted data point in
-    # the data-journalism tradition.
+    # Annotate the peak — the single highlighted data point in NYT/Bloomberg
+    # tradition.
     if any(books_values):
         peak_i = max(range(len(books_values)), key=lambda i: books_values[i])
         peak_v = books_values[peak_i]
@@ -498,61 +497,33 @@ def _draw_combined_chart(ax, stats: Stats):
                 xy=(peak_i, peak_v),
                 xytext=(0, 12), textcoords="offset points",
                 ha="center", va="bottom",
-                color=COLOR_TEXT_HIGH, fontsize=9, fontweight="semibold",
+                color=COLOR_TEXT_HIGH, fontsize=10, fontweight="semibold",
                 zorder=4,
             )
 
-    # Section title + colored series labels in a deck line. We place the
-    # second label flush after the first by measuring the rendered bbox of
-    # the first — same trick the book list uses.
-    ax.set_title("Reading by month",
+    ax.set_title("Books read by month",
                  color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
-                 pad=24, loc="left")
-    label_books = ax.text(0.0, 1.05, "Books",
-                          transform=ax.transAxes,
-                          color=COLOR_BOOKS, fontsize=10, fontweight="semibold",
-                          ha="left", va="bottom")
-    ax.figure.canvas.draw()
-    inv = ax.transAxes.inverted()
-    x_end = inv.transform((label_books.get_window_extent().x1, 0))[0]
-    ax.text(x_end + 0.015, 1.05, "·",
-            transform=ax.transAxes,
-            color=COLOR_TEXT_MUTED, fontsize=10,
-            ha="left", va="bottom")
-    ax.text(x_end + 0.04, 1.05, "Pages",
-            transform=ax.transAxes,
-            color=COLOR_PAGES, fontsize=10, fontweight="semibold",
-            ha="left", va="bottom")
+                 pad=14, loc="left")
 
-    # X axis: month labels
+    # X axis
     ax.set_xticks(x, labels=months)
     ax.tick_params(axis="x", colors=COLOR_TEXT_MUTED, labelsize=8.5,
                    length=0, pad=6)
 
-    # Left y axis: books, blue tinted
-    ax.tick_params(axis="y", colors=COLOR_BOOKS, labelsize=8.5,
+    # Left y axis: integer ticks for books
+    ax.tick_params(axis="y", colors=COLOR_TEXT_MUTED, labelsize=8.5,
                    length=0, pad=4)
-    # Integer-only ticks for books (you don't read 2.5 books)
     max_books = max(books_values) if books_values else 0
     if max_books > 0:
         step = max(1, max_books // 4)
         ax.set_yticks(list(range(0, max_books + step, step)))
     ax.set_ylim(bottom=0)
 
-    # Right y axis: pages, amber tinted
-    ax2.tick_params(axis="y", colors=COLOR_PAGES, labelsize=8.5,
-                    length=0, pad=4)
-    ax2.set_ylim(bottom=0)
-
-    # Spines: hide everything except a hairline bottom rule
+    # Spines off; subtle bottom rule and gridlines
     for s in ("top", "left", "right"):
         ax.spines[s].set_visible(False)
     ax.spines["bottom"].set_color(COLOR_DIVIDER)
     ax.spines["bottom"].set_linewidth(0.8)
-    for s in ax2.spines.values():
-        s.set_visible(False)
-
-    # Subtle gridlines
     ax.yaxis.grid(True, color=COLOR_GRID, linewidth=0.5)
     ax.set_axisbelow(True)
 
@@ -577,9 +548,18 @@ def _draw_genres(ax, genre_data, stats: Stats):
         for spine in ax.spines.values():
             spine.set_visible(False)
         ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
-        ax.text(0.5, 0.5, "Genre data unavailable",
+        if stats.total_books > 0:
+            msg = (
+                f"Google Books returned no genre data for any of the "
+                f"{stats.total_books} books in the window. This usually means "
+                f"the books in your read shelf RSS lacked ISBNs."
+            )
+        else:
+            msg = "No books in the window."
+        ax.text(0.5, 0.5, msg,
                 ha="center", va="center",
-                color=COLOR_TEXT_MUTED, fontsize=10,
+                color=COLOR_TEXT_MUTED, fontsize=10, fontstyle="italic",
+                wrap=True,
                 transform=ax.transAxes)
         return
 
@@ -626,10 +606,10 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     _strip_axes(ax)
     ax.set_title("What you read",
                  color=COLOR_TEXT_HIGH, fontsize=13, fontweight="semibold",
-                 pad=14, loc="left")
+                 pad=6, loc="left")
     titles = stats.book_titles
     if not titles:
-        ax.text(0.0, 0.92, "(none)",
+        ax.text(0.0, 0.96, "(none)",
                 ha="left", va="top",
                 color=COLOR_TEXT_MUTED, fontsize=10,
                 transform=ax.transAxes)
@@ -639,19 +619,23 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     visible = titles[:list_max]
     n_lines = len(visible) + (1 if truncated else 0)
 
-    # Type sizes scale gently with list length.
-    if n_lines <= 10:
-        font_size = 11
-    elif n_lines <= 20:
-        font_size = 10
-    elif n_lines <= 30:
-        font_size = 9
+    # Larger type than before — the list is the longest section, it should
+    # read comfortably. The longest title+author should reach close to the
+    # right-hand date column.
+    if n_lines <= 6:
+        font_size = 16
+    elif n_lines <= 12:
+        font_size = 15
+    elif n_lines <= 18:
+        font_size = 14
+    elif n_lines <= 28:
+        font_size = 13
     else:
-        font_size = 8
+        font_size = 11
 
-    available = 0.88
-    line_height = max(0.058, available / max(n_lines, 1))
-    start_y = 0.90
+    available = 0.96
+    line_height = max(0.060, available / max(n_lines, 1))
+    start_y = 0.97
 
     # Three text artists per book: bold title (left), author (regular,
     # positioned flush after title via bbox measurement), date (right-aligned
@@ -660,9 +644,9 @@ def _draw_book_list(ax, stats: Stats, list_max: int = 50):
     title_artists = []
     for i, (date, title, author) in enumerate(visible):
         y = start_y - (i + 1) * line_height
-        if y < 0.02:
+        if y < 0.0:
             break
-        clipped_title = title if len(title) <= 55 else title[:54] + "…"
+        clipped_title = title if len(title) <= 70 else title[:69] + "…"
         t_title = ax.text(0.0, y, clipped_title,
                           ha="left", va="top",
                           color=COLOR_TEXT_HIGH, fontsize=font_size, fontweight="bold",
