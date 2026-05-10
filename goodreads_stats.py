@@ -1023,12 +1023,13 @@ COLOR_EDITORIAL_RULE = "#b8b3a3"      # editorial horizontal rule — paper grey
 
 
 def _compute_height_ratios_editorial(n_list_lines: int) -> list:
-    """Editorial layout: bigger masthead with serif type, slightly tighter
-    chart and genre sections (no card padding to fill), generous list."""
-    masthead = 2.80
-    chart = 2.60
-    genres = 2.20
-    list_h = 0.50 + n_list_lines * 0.30
+    """Editorial layout: matches the cards layout — same proportions, just
+    no card backgrounds and hairline rules between sections instead. The
+    user has already tuned these ratios; don't drift from them."""
+    masthead = 2.10
+    chart = 2.80
+    genres = 2.55
+    list_h = 0.45 + n_list_lines * 0.36
     return [masthead, chart, genres, list_h]
 
 
@@ -1049,7 +1050,7 @@ def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     _draw_books_per_month_editorial(fig.add_subplot(gs[1]), stats, fmt=fmt)
     genre_ax = fig.add_subplot(gs[2])
     _draw_genres_editorial(genre_ax, genre_data, stats)
-    _set_subplot_left(genre_ax, 0.30)
+    _set_subplot_left(genre_ax, 0.25)
     _draw_book_list_editorial(fig.add_subplot(gs[3]), stats, fmt=fmt)
 
     _draw_section_rules_editorial(fig, gs)
@@ -1076,9 +1077,11 @@ def _draw_section_rules_editorial(fig, gs) -> None:
 
 
 def _draw_masthead_editorial(ax, stats: Stats) -> None:
-    """Editorial masthead: serif headline, sans deck, big serif stat number,
-    small caps label below. Hierarchy comes from the type scale, not from
-    color or weight alone."""
+    """Editorial masthead — same three-line structure as the cards version
+    so the user's tuned spacing carries over. The only differences from
+    cards: serif font for the headline and summary, single uniform size
+    across all three lines (the user explicitly asked for this earlier
+    and I broke that rule in the first editorial pass)."""
     _strip_axes(ax)
     ax.set_facecolor(COLOR_PAGE_BG)
 
@@ -1087,49 +1090,33 @@ def _draw_masthead_editorial(ax, stats: Stats) -> None:
     else:
         headline = "Your Year in Books"
 
-    # Headline — serif, large, bold
-    ax.text(0.5, 0.86, headline,
+    # All three lines at one type size; weight + family carry the hierarchy.
+    masthead_size = 22
+
+    ax.text(0.5, 0.82, headline,
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=30, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             family="serif",
             transform=ax.transAxes)
 
-    # Deck — the date range, sans, regular
     date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
-    ax.text(0.5, 0.66, date_range,
+    ax.text(0.5, 0.50, date_range,
             ha="center", va="center",
-            color=COLOR_TEXT_MUTED, fontsize=13, fontweight="regular",
+            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="regular",
             transform=ax.transAxes)
 
     if stats.total_books == 0:
-        ax.text(0.5, 0.30, "No books read in the last 12 months.",
+        ax.text(0.5, 0.18, "No books read in the last 12 months.",
                 ha="center", va="center",
-                color=COLOR_TEXT_BODY, fontsize=14, fontweight="bold",
+                color=COLOR_TEXT_BODY, fontsize=masthead_size, fontweight="bold",
                 transform=ax.transAxes)
         return
 
-    # Big stat — serif, very large. Slightly smaller than the first pass
-    # so it doesn't crowd the kicker.
-    ax.text(0.5, 0.36, f"{stats.total_books:,}",
+    summary = f"{stats.total_books:,} books finished in the last 12 months"
+    ax.text(0.5, 0.18, summary,
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=58, fontweight="bold",
+            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             family="serif",
-            transform=ax.transAxes)
-
-    # Caption — sans, small, plain uppercase (the letter-spaced version
-    # got too wide and crashed into the number above).
-    ax.text(0.5, 0.06, "BOOKS FINISHED IN THE LAST 12 MONTHS",
-            ha="center", va="center",
-            color=COLOR_TEXT_MUTED, fontsize=10, fontweight="bold",
-            transform=ax.transAxes)
-
-
-def _draw_section_kicker(ax, label: str) -> None:
-    """Render the small uppercase section label that sits above the chart
-    proper in editorial style — the equivalent of an NYT chart 'kicker'."""
-    ax.text(0.0, 1.10, label,
-            ha="left", va="bottom",
-            color=COLOR_TEXT_HIGH, fontsize=10, fontweight="bold",
             transform=ax.transAxes)
 
 
@@ -1171,7 +1158,9 @@ def _draw_books_per_month_editorial(ax, stats: Stats, fmt: dict | None = None) -
                 zorder=4,
             )
 
-    _draw_section_kicker(ax, "READING BY MONTH")
+    ax.set_title("BOOKS READ BY MONTH",
+                 color=COLOR_TEXT_HIGH, fontsize=11, fontweight="bold",
+                 pad=14, loc="left")
 
     max_books = max(values) if values else 1
     ax.set_xlim(-0.6, len(values) - 0.4)
@@ -1212,7 +1201,9 @@ def _draw_genres_editorial(ax, genre_data, stats: Stats) -> None:
     items, uncategorized = genre_data
     ax.set_facecolor(COLOR_PAGE_BG)
 
-    _draw_section_kicker(ax, "TOP GENRES")
+    ax.set_title("TOP GENRES",
+                 color=COLOR_TEXT_HIGH, fontsize=11, fontweight="bold",
+                 pad=14, loc="left")
 
     if not items:
         for spine in ax.spines.values():
@@ -1266,11 +1257,13 @@ def _draw_book_list_editorial(ax, stats: Stats, fmt: dict | None = None) -> None
     list_max = fmt.get("list_max", 200)
     _strip_axes(ax)
     ax.set_facecolor(COLOR_PAGE_BG)
-    _draw_section_kicker(ax, "WHAT YOU READ")
+    ax.set_title("WHAT YOU READ IN THE LAST 12 MONTHS",
+                 color=COLOR_TEXT_HIGH, fontsize=11, fontweight="bold",
+                 pad=2, loc="left")
 
     titles = stats.book_titles
     if not titles:
-        ax.text(0.0, 0.92, "(none)",
+        ax.text(0.0, 0.96, "(none)",
                 ha="left", va="top",
                 color=COLOR_TEXT_MUTED, fontsize=10,
                 transform=ax.transAxes)
