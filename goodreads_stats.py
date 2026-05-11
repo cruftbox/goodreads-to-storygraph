@@ -144,17 +144,19 @@ def _compute_formats(stats: "Stats", style: str = "cards") -> list:
     ]
 
 
-def _compute_height_ratios(n_list_lines: int) -> list:
+def _compute_height_ratios(stats: "Stats") -> list:
     """Section ratios for the five-section layout: masthead, highlights,
-    monthly chart, genres, book list."""
+    monthly chart, genres, book list. The book-list ratio accounts for the
+    month-grouped layout — fixed cost per month header plus a per-book
+    cost."""
+    n_books = stats.total_books
+    n_months = sum(1 for _, count in stats.books_per_month if count > 0)
+
     masthead = 2.10
-    highlights = 3.20   # 2x2 grid: extra room so top-row detail clears bottom-row label   # 3-line stats need more vertical room than the old single-value version
+    highlights = 3.20
     chart = 2.80
-    genres = 2.55
-    # Per-line allocation bumped 0.36 → 0.50 — the user has flagged
-    # "still tight" line spacing repeatedly. Figure height grows so this
-    # does not crowd anything else.
-    list_h = 0.45 + n_list_lines * 0.50
+    genres = 3.20
+    list_h = 0.50 + n_months * 0.60 + n_books * 0.30
     return [masthead, highlights, chart, genres, list_h]
 
 
@@ -682,27 +684,26 @@ def _render_one(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
 def _render_cards(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PAGE_BG)
 
-    n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
     gs = GridSpec(
         nrows=5, ncols=1,
         figure=fig,
         left=0.07, right=0.93, top=0.965, bottom=0.055,
-        height_ratios=_compute_height_ratios(n_list_lines),
+        height_ratios=_compute_height_ratios(stats),
         hspace=0.45,
     )
 
     highlights = compute_highlights(stats)
 
-    # Card backgrounds drawn first so they sit behind every chart artist.
-    _draw_section_cards(fig, gs)
+    # Cards behind masthead, highlights, chart only. Genres and book list
+    # use their own uniform-background editorial designs per user spec —
+    # no cards, no borders.
+    _draw_section_cards(fig, gs, skip_indices=[3, 4])
 
     _draw_masthead(fig.add_subplot(gs[0]), stats, fmt=fmt)
     _draw_highlights_cards(fig.add_subplot(gs[1]), highlights)
     _draw_books_per_month(fig.add_subplot(gs[2]), stats, fmt=fmt)
-    genre_ax = fig.add_subplot(gs[3])
-    _draw_genres(genre_ax, genre_data, stats)
-    _set_subplot_left(genre_ax, 0.25)
-    _draw_book_list(fig.add_subplot(gs[4]), stats, fmt=fmt)
+    _draw_genres_v2(fig.add_subplot(gs[3]), genre_data, stats)
+    _draw_book_list_grouped(fig.add_subplot(gs[4]), stats)
 
     _draw_footer(fig, stats)
 
@@ -718,11 +719,16 @@ def _set_subplot_left(ax, new_left: float) -> None:
     ax.set_position([new_left, pos.y0, pos.x1 - new_left, pos.height])
 
 
-def _draw_section_cards(fig, gs) -> None:
+def _draw_section_cards(fig, gs, skip_indices=None) -> None:
     """Draw a slightly elevated 'card' behind each gridspec row so the
-    sections are visually delineated against the darker page background."""
+    sections are visually delineated against the darker page background.
+    `skip_indices` excludes specific rows (e.g., the book list, which has
+    its own uniform background by user spec)."""
+    skip = set(skip_indices or [])
     n = gs.get_geometry()[0]
     for i in range(n):
+        if i in skip:
+            continue
         pos = gs[i].get_position(fig)
         # Generous bleed around each section, especially upward to cover the
         # section title area that lives in the gridspec's title pad.
@@ -1024,6 +1030,213 @@ def _draw_genres(ax, genre_data, stats: Stats):
                 transform=ax.transAxes)
 
 
+def _section_pixel_dims(ax):
+    """Return (width_px, height_px, dpi) for the given axes — used by
+    pixel-spec drawing helpers to translate CSS-ish px values into axes
+    fractions."""
+    fig = ax.figure
+    pos = ax.get_position()
+    w_in = fig.get_size_inches()[0] * (pos.x1 - pos.x0)
+    h_in = fig.get_size_inches()[1] * (pos.y1 - pos.y0)
+    dpi = fig.get_dpi()
+    return w_in * dpi, h_in * dpi, dpi
+
+
+def _draw_genres_v2(ax, genre_data, stats):
+    """User-spec genre design: 140px right-aligned label column, 10px-tall
+    solid bars with a light grey track behind, count right-aligned in a
+    24px column after each bar. Top 2 genres in accent #B5341A, rest in
+    #1C1C1C. No spines, no gridlines, no ticks — the count on the right
+    carries the data."""
+    items, uncategorized = genre_data
+    _strip_axes(ax)
+    ax.set_facecolor("#F7F5F0")
+
+    w_px, h_px, _ = _section_pixel_dims(ax)
+    def afx(px): return px / max(1.0, w_px)
+    def afy(px): return px / max(1.0, h_px)
+
+    # Heading + rule
+    y = 1.0
+    ax.text(0.0, y, "TOP GENRES",
+            ha="left", va="top",
+            color="#666", fontsize=10, fontweight="bold",
+            transform=ax.transAxes)
+    y -= afy(20)
+    ax.add_line(plt.Line2D(
+        [0.0, 1.0], [y, y],
+        transform=ax.transAxes, color="#D5D2CB", linewidth=1.0,
+    ))
+    y -= afy(18)
+
+    if not items:
+        if stats.total_books > 0:
+            msg = f"No genre data returned for any of the {stats.total_books} books."
+        else:
+            msg = "No books in the window."
+        ax.text(0.0, y, msg,
+                ha="left", va="top",
+                color="#888", fontsize=11, fontstyle="italic",
+                transform=ax.transAxes)
+        return
+
+    # Column geometry per spec.
+    label_col_right = afx(140)
+    gap = afx(8)
+    count_col_w = afx(24)
+    bar_left = label_col_right + gap
+    bar_right = 1.0 - count_col_w - gap
+    bar_h = afy(10)
+    row_h = afy(24)
+
+    max_val = max(v for _, v in items) if items else 1
+
+    for i, (label, value) in enumerate(items):
+        # Bar baseline: center the 10px bar vertically inside the row.
+        bar_top = y - afy(6)
+        bar_bottom = bar_top - bar_h
+        text_y = (bar_top + bar_bottom) / 2
+
+        # Right-aligned label, in 140px column
+        ax.text(label_col_right - afx(8), text_y, label,
+                ha="right", va="center",
+                color="#1C1C1C", fontsize=10, fontweight="bold",
+                transform=ax.transAxes)
+
+        # Track (full width, shows total potential)
+        ax.add_patch(Rectangle(
+            (bar_left, bar_bottom),
+            bar_right - bar_left, bar_h,
+            facecolor="#E3E1DA", edgecolor="none",
+            transform=ax.transAxes, zorder=1,
+        ))
+
+        # Filled portion
+        fill_w = (bar_right - bar_left) * (value / max_val)
+        bar_color = "#B5341A" if i < 2 else "#1C1C1C"
+        ax.add_patch(Rectangle(
+            (bar_left, bar_bottom),
+            fill_w, bar_h,
+            facecolor=bar_color, edgecolor="none",
+            transform=ax.transAxes, zorder=2,
+        ))
+
+        # Count right-aligned at far right
+        ax.text(1.0, text_y, str(value),
+                ha="right", va="center",
+                color="#1C1C1C", fontsize=12, fontweight="bold",
+                transform=ax.transAxes)
+
+        y -= row_h
+
+
+def _draw_book_list_grouped(ax, stats: Stats):
+    """User-spec book list: grouped by month (newest first), each group
+    headed by month name + count and a 1px rule. Each book is one row
+    with sequential number, bold title, italic author. 0.5px rules
+    between rows within a group. No truncation."""
+    _strip_axes(ax)
+    ax.set_facecolor("#F7F5F0")
+
+    # Reverse-chronological groups by "Month YYYY"
+    groups = []  # [(month_label, [(date, title, author), ...]), ...]
+    cur_label = None
+    cur_books: list = []
+    for date, title, author in stats.book_titles:
+        label = date.strftime("%B %Y").upper()
+        if label != cur_label:
+            if cur_books:
+                groups.append((cur_label, cur_books))
+            cur_label = label
+            cur_books = []
+        cur_books.append((date, title, author))
+    if cur_books:
+        groups.append((cur_label, cur_books))
+
+    w_px, h_px, _ = _section_pixel_dims(ax)
+    def afx(px): return px / max(1.0, w_px)
+    def afy(px): return px / max(1.0, h_px)
+
+    # Heading + rule
+    y = 1.0
+    ax.text(0.0, y, "WHAT YOU READ",
+            ha="left", va="top",
+            color="#666", fontsize=10, fontweight="bold",
+            transform=ax.transAxes)
+    y -= afy(20)
+    ax.add_line(plt.Line2D(
+        [0.0, 1.0], [y, y],
+        transform=ax.transAxes, color="#D5D2CB", linewidth=1.0,
+    ))
+    y -= afy(16)
+
+    if not groups:
+        ax.text(0.0, y, "(no books)",
+                ha="left", va="top",
+                color="#888", fontsize=12, transform=ax.transAxes)
+        return
+
+    # Column geometry per spec.
+    num_col_right = afx(28)       # 20px column + small left padding
+    title_col_left = afx(36)
+    title_col_right = title_col_left + 0.54  # 54% width column
+    author_col_left = title_col_right + afx(8)
+
+    # Sequential numbering top-down: highest at top.
+    book_num = stats.total_books
+
+    for gi, (month_label, books) in enumerate(groups):
+        # Group header: month left, count right
+        ax.text(0.0, y, month_label,
+                ha="left", va="top",
+                color="#B5341A", fontsize=10, fontweight="bold",
+                transform=ax.transAxes)
+        ax.text(1.0, y, str(len(books)),
+                ha="right", va="top",
+                color="#bbb", fontsize=10,
+                transform=ax.transAxes)
+        y -= afy(18)
+        # Rule under header
+        ax.add_line(plt.Line2D(
+            [0.0, 1.0], [y, y],
+            transform=ax.transAxes, color="#1C1C1C", linewidth=1.0,
+        ))
+        y -= afy(10)
+
+        for bi, (date, title, author) in enumerate(books):
+            # Sequential number, right-aligned in 20px column
+            ax.text(num_col_right, y, str(book_num),
+                    ha="right", va="top",
+                    color="#ccc", fontsize=10,
+                    transform=ax.transAxes)
+            # Title, 13px bold
+            ax.text(title_col_left, y, title,
+                    ha="left", va="top",
+                    color="#1C1C1C", fontsize=13, fontweight="bold",
+                    transform=ax.transAxes)
+            # Author, 12px italic
+            ax.text(author_col_left, y, author,
+                    ha="left", va="top",
+                    color="#888", fontsize=12, fontstyle="italic",
+                    transform=ax.transAxes)
+            book_num -= 1
+            y -= afy(22)
+            # Row rule (except after last in group)
+            if bi < len(books) - 1:
+                ax.add_line(plt.Line2D(
+                    [0.0, 1.0], [y, y],
+                    transform=ax.transAxes, color="#DDD9D0", linewidth=0.5,
+                ))
+                y -= afy(4)
+
+        # Gap before next group
+        if gi < len(groups) - 1:
+            y -= afy(14)
+
+
+# ----- old book-list functions kept below for reference but no longer wired -----
+
+
 def _draw_book_list(ax, stats: Stats, fmt: dict | None = None, list_max: int | None = None):
     fmt = fmt or {}
     if list_max is None:
@@ -1135,26 +1348,28 @@ COLOR_EDITORIAL_ACCENT = COLOR_PAGES  # "#c2691f"
 COLOR_EDITORIAL_RULE = "#b8b3a3"      # editorial horizontal rule — paper grey
 
 
-def _compute_height_ratios_editorial(n_list_lines: int) -> list:
+def _compute_height_ratios_editorial(stats: "Stats") -> list:
     """Editorial layout — matches cards proportions section-by-section but
     with no card backgrounds and hairline rules instead."""
+    n_books = stats.total_books
+    n_months = sum(1 for _, count in stats.books_per_month if count > 0)
+
     masthead = 2.10
-    highlights = 3.20   # 2x2 grid: extra room so top-row detail clears bottom-row label
+    highlights = 3.20
     chart = 2.80
     genres = 2.55
-    list_h = 0.45 + n_list_lines * 0.50
+    list_h = 0.50 + n_months * 0.60 + n_books * 0.30
     return [masthead, highlights, chart, genres, list_h]
 
 
 def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     fig = plt.figure(figsize=fmt["size_in"], facecolor=COLOR_PAGE_BG)
 
-    n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
     gs = GridSpec(
         nrows=5, ncols=1,
         figure=fig,
         left=0.08, right=0.92, top=0.95, bottom=0.05,
-        height_ratios=_compute_height_ratios_editorial(n_list_lines),
+        height_ratios=_compute_height_ratios_editorial(stats),
         hspace=0.50,
     )
 
@@ -1164,10 +1379,8 @@ def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     _draw_masthead_editorial(fig.add_subplot(gs[0]), stats, fmt=fmt)
     _draw_highlights_editorial(fig.add_subplot(gs[1]), highlights)
     _draw_books_per_month_editorial(fig.add_subplot(gs[2]), stats, fmt=fmt)
-    genre_ax = fig.add_subplot(gs[3])
-    _draw_genres_editorial(genre_ax, genre_data, stats)
-    _set_subplot_left(genre_ax, 0.25)
-    _draw_book_list_editorial(fig.add_subplot(gs[4]), stats, fmt=fmt)
+    _draw_genres_v2(fig.add_subplot(gs[3]), genre_data, stats)
+    _draw_book_list_grouped(fig.add_subplot(gs[4]), stats)
 
     _draw_section_rules_editorial(fig, gs)
     _draw_footer_editorial(fig, stats)
