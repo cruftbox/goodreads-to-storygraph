@@ -11,50 +11,6 @@ Only tested on Windows 11, but should work on macOS and Linux with Python and Ch
 
 > **Tip:** an LLM coding assistant (Claude Code, ChatGPT, Cursor, etc.) is genuinely helpful when installing or debugging this — especially the sync feature, which is browser-driven and can break in interesting ways on new machines. If something doesn't work, paste the error into your assistant of choice.
 
-## Prerequisites
-
-- Python 3.8 or higher
-- Google Chrome installed (used by both features)
-- `pip` available on your `PATH`
-
-## Install
-
-```bash
-git clone https://github.com/cruftbox/goodreads-tools.git
-cd goodreads-tools
-pip install -r requirements.txt
-python -m playwright install chromium
-```
-
-The last step downloads a headless Chromium build (~150 MB) that the Year in Books report uses to render PDF/PNG output. It's a one-time setup and easy to miss — if the report fails with a Playwright error, this is probably why.
-
-## Configure
-
-Edit `config.json`:
-
-```json
-{
-    "goodreads_user_id": "YOUR_GOODREADS_USER_ID",
-    "storygraph_email": "YOUR_STORYGRAPH_EMAIL",
-    "storygraph_password": "YOUR_STORYGRAPH_PASSWORD"
-}
-```
-
-- **`goodreads_user_id`** — required for both features. Go to your Goodreads profile; the URL looks like `https://www.goodreads.com/user/show/12345678-username`. The leading number is your user ID.
-- **`storygraph_email`** / **`storygraph_password`** — only needed for the sync feature. If you only care about the Year in Books report, leave these as placeholders.
-
-## Run
-
-The easiest way is the local web UI:
-
-```bash
-python app.py
-```
-
-This opens `http://127.0.0.1:5000` with one button per feature. The server binds to `127.0.0.1` only — it isn't reachable from other machines on your network.
-
-You can also run either feature directly from the command line — see the per-feature sections below.
-
 ---
 
 ## Feature: Year in Books report
@@ -99,6 +55,52 @@ python book_sync.py
 ```
 
 Either way, a `sync_log.txt` file in the project directory captures everything for later inspection.
+
+---
+
+## Prerequisites
+
+- Python 3.8 or higher
+- Google Chrome installed (used by both features)
+- `pip` available on your `PATH`
+
+## Install
+
+```bash
+git clone https://github.com/cruftbox/goodreads-tools.git
+cd goodreads-tools
+pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+The last step downloads a headless Chromium build (~150 MB) that the Year in Books report uses to render PDF/PNG output. It's a one-time setup and easy to miss — if the report fails with a Playwright error, this is probably why.
+
+## Configure
+
+Edit `config.json`:
+
+```json
+{
+    "goodreads_user_id": "YOUR_GOODREADS_USER_ID",
+    "storygraph_email": "YOUR_STORYGRAPH_EMAIL",
+    "storygraph_password": "YOUR_STORYGRAPH_PASSWORD"
+}
+```
+
+- **`goodreads_user_id`** — required for both features. Go to your Goodreads profile; the URL looks like `https://www.goodreads.com/user/show/12345678-username`. The leading number is your user ID.
+- **`storygraph_email`** / **`storygraph_password`** — only needed for the sync feature. If you only care about the Year in Books report, leave these as placeholders.
+
+## Run
+
+The easiest way is the local web UI:
+
+```bash
+python app.py
+```
+
+This opens `http://127.0.0.1:5000` with one button per feature. The server binds to `127.0.0.1` only — it isn't reachable from other machines on your network.
+
+You can also run either feature directly from the command line — see the per-feature sections above.
 
 ## Troubleshooting
 
