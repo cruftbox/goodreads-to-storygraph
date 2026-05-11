@@ -148,7 +148,7 @@ def _compute_height_ratios(n_list_lines: int) -> list:
     """Section ratios for the five-section layout: masthead, highlights,
     monthly chart, genres, book list."""
     masthead = 2.10
-    highlights = 2.40   # 2x2 grid needs roughly twice the vertical room of a single row   # 3-line stats need more vertical room than the old single-value version
+    highlights = 3.20   # 2x2 grid: extra room so top-row detail clears bottom-row label   # 3-line stats need more vertical room than the old single-value version
     chart = 2.80
     genres = 2.55
     # Per-line allocation bumped 0.36 → 0.50 — the user has flagged
@@ -824,8 +824,10 @@ def _draw_highlights_grid(ax, highlights: dict, *, divider_color: str, serif_pri
         cx = (col + 0.5) * cell_w           # cell center x
         cy = 1.0 - (row + 0.5) * cell_h     # cell center y (top row first)
 
-        # Three lines within the cell: label / primary / detail
-        ax.text(cx, cy + 0.30 * cell_h, label.upper(),
+        # Three lines within the cell. Tighter vertical spread (0.30 -> 0.22
+        # of cell height) keeps the top row's detail away from the bottom
+        # row's label.
+        ax.text(cx, cy + 0.22 * cell_h, label.upper(),
                 ha="center", va="center",
                 color=COLOR_TEXT_MUTED, fontsize=9, fontweight="bold",
                 transform=ax.transAxes)
@@ -834,7 +836,7 @@ def _draw_highlights_grid(ax, highlights: dict, *, divider_color: str, serif_pri
                 ha="center", va="center",
                 color=COLOR_TEXT_HIGH, fontsize=16, fontweight="bold",
                 transform=ax.transAxes, **kwargs)
-        ax.text(cx, cy - 0.30 * cell_h, detail,
+        ax.text(cx, cy - 0.22 * cell_h, detail,
                 ha="center", va="center",
                 color=COLOR_TEXT_MUTED, fontsize=10, fontweight="regular",
                 transform=ax.transAxes)
@@ -1137,7 +1139,7 @@ def _compute_height_ratios_editorial(n_list_lines: int) -> list:
     """Editorial layout — matches cards proportions section-by-section but
     with no card backgrounds and hairline rules instead."""
     masthead = 2.10
-    highlights = 2.40   # 2x2 grid needs roughly twice the vertical room of a single row
+    highlights = 3.20   # 2x2 grid: extra room so top-row detail clears bottom-row label
     chart = 2.80
     genres = 2.55
     list_h = 0.45 + n_list_lines * 0.50
@@ -1223,12 +1225,14 @@ def _draw_masthead_editorial(ax, stats: Stats, fmt: dict | None = None) -> None:
     ax.text(0.5, 0.50, date_range,
             ha="center", va="center",
             color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="regular",
+            family="serif",
             transform=ax.transAxes)
 
     if stats.total_books == 0:
         ax.text(0.5, 0.18, "No books read in the last 12 months.",
                 ha="center", va="center",
                 color=COLOR_TEXT_BODY, fontsize=masthead_size, fontweight="bold",
+                family="serif",
                 transform=ax.transAxes)
         return
 
