@@ -1692,6 +1692,76 @@ def _draw_footer_editorial(fig, stats: Stats) -> None:
     )
 
 
+# -------- HTML report (separate from matplotlib pipeline) --------
+
+def render_html_report(stats: Stats, genre_data, output_path: Path) -> Path:
+    """Render the full year-in-books as standalone HTML/CSS using Jinja2.
+    Independent of the matplotlib pipeline — text renders natively in the
+    browser at any zoom level. Returns the path written."""
+    from jinja2 import Environment, FileSystemLoader, select_autoescape
+
+    templates_dir = Path(__file__).resolve().parent / "templates"
+    env = Environment(
+        loader=FileSystemLoader(str(templates_dir)),
+        autoescape=select_autoescape(["html"]),
+    )
+    template = env.get_template("year_in_books_report.html")
+
+    # Highlights as a list of (label, primary, detail) tuples in display order.
+    highlights = compute_highlights(stats)
+    highlight_cells = [
+        highlights[k] for k in ("peak_month", "top_author", "longest", "avg_pages")
+        if k in highlights
+    ]
+
+    # Genre items + max for percentage math
+    genre_items = genre_data[0] if genre_data else []
+    genre_max = max((v for _, v in genre_items), default=1)
+
+    # Peak month for the chart note
+    peak_count = 0
+    peak_month_short = ""
+    if stats.books_per_month:
+        peak_label, peak_count = max(stats.books_per_month, key=lambda x: x[1])
+        if peak_count > 0:
+            parts = peak_label.split()
+            peak_month_short = f"{parts[0]} {parts[1][-2:]}" if len(parts) == 2 else peak_label
+
+    # Group books by month with sequential numbering top-down.
+    groups: list = []
+    cur_label = None
+    cur_list: list = []
+    num = stats.total_books
+    for date, title, author in stats.book_titles:
+        label = date.strftime("%B %Y").upper()
+        if label != cur_label:
+            if cur_list:
+                groups.append((cur_label, cur_list))
+            cur_label = label
+            cur_list = []
+        cur_list.append((num, title, author))
+        num -= 1
+    if cur_list:
+        groups.append((cur_label, cur_list))
+
+    html = template.render(
+        stats=stats,
+        first_name=stats.first_name,
+        window_start_str=stats.window_start.strftime("%B %Y"),
+        window_end_str=stats.window_end.strftime("%B %Y"),
+        highlight_cells=highlight_cells,
+        peak_count=peak_count,
+        peak_month_short=peak_month_short,
+        genre_items=genre_items,
+        genre_max=genre_max,
+        groups=groups,
+        generated_str=stats.window_end.strftime("%b %d, %Y"),
+    )
+    output_path = Path(output_path)
+    output_path.write_text(html, encoding="utf-8")
+    return output_path
+
+
 # -------- end-to-end --------
 
 def generate(user_id: str, output_dir: Path, today: Optional[datetime] = None,
@@ -1710,6 +1780,19 @@ def generate(user_id: str, output_dir: Path, today: Optional[datetime] = None,
         genre_data = aggregate_genres(stats.books, genres_by_isbn)
 
     paths = render_visual(stats, genre_data, output_dir, style=style)
+
+    # Always also produce the standalone HTML report — it's style-independent
+    # and rendered natively in the browser, no matplotlib font/layout
+    # surprises. Filename includes the style suffix for parity with the
+    # other outputs.
+    suffix = "" if style == "cards" else f"_{style}"
+    html_path = output_dir / f"year_in_books{suffix}.html"
+    try:
+        render_html_report(stats, genre_data, html_path)
+        paths["html"] = html_path
+    except Exception as e:
+        logging.warning("HTML report render failed: %s", e)
+
     return {
         "total_books": stats.total_books,
         "total_pages": stats.total_pages,

@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if first_name %}{{ first_name }}&rsquo;s{% else %}Your{% endif %} Year in Books</title>
+<style>
+  :root {
+    --page-bg: #f4efe4;
+    --book-list-bg: #F7F5F0;
+    --text-high: #1C1C1C;
+    --text-body: #3a3f50;
+    --text-muted: #7d8294;
+    --rule-soft: #d5d2cb;
+    --rule-strong: #1C1C1C;
+    --row-rule: #DDD9D0;
+    --label-grey: #666;
+    --num-grey: #ccc;
+    --count-grey: #bbb;
+    --author-grey: #888;
+    --accent: #B5341A;
+    --accent-secondary: #1C1C1C;
+    --track: #E3E1DA;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--page-bg);
+    color: var(--text-high);
+    font-family: Inter, "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
+    font-feature-settings: "kern" 1, "liga" 1;
+    -webkit-font-smoothing: antialiased;
+  }
+  .container {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 48px 32px 64px;
+  }
+  .masthead {
+    text-align: center;
+    font-family: Georgia, "Cambria", "Times New Roman", serif;
+    font-weight: 700;
+    font-size: 28px;
+    line-height: 1.45;
+    padding: 24px 0;
+  }
+  .divider {
+    height: 1px;
+    background: var(--rule-soft);
+    margin: 24px 0;
+  }
+  .section-heading {
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--label-grey);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule-soft);
+    margin: 0 0 20px;
+  }
+
+  /* Highlights row */
+  .highlights {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0;
+  }
+  .highlights .cell {
+    text-align: center;
+    padding: 20px 24px;
+  }
+  .highlights .cell + .cell:nth-child(2n) { border-left: 1px solid var(--rule-soft); }
+  .highlights .cell:nth-child(n+3) { border-top: 1px solid var(--rule-soft); }
+  .highlights .label {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+  }
+  .highlights .primary {
+    font-family: Georgia, "Cambria", "Times New Roman", serif;
+    font-size: 26px;
+    font-weight: 700;
+    margin: 8px 0 4px;
+    line-height: 1.2;
+  }
+  .highlights .detail {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* Books-by-month chart */
+  .chart {
+    display: flex;
+    align-items: flex-end;
+    height: 240px;
+    gap: 8px;
+    padding-top: 24px;
+  }
+  .chart .month {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .chart .stack {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 2px;
+    min-height: 0;
+  }
+  .chart .spine {
+    height: 18px;
+    background: #c2691f;
+    border-radius: 0;
+  }
+  .chart .month-label {
+    text-align: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-high);
+    margin-top: 8px;
+  }
+  .chart-peak-note {
+    font-size: 11px;
+    color: var(--text-high);
+    font-weight: 600;
+    text-align: right;
+    margin-bottom: 4px;
+  }
+
+  /* Genres */
+  .genres .row {
+    display: grid;
+    grid-template-columns: 140px 1fr 24px;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .genres .name {
+    text-align: right;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-high);
+  }
+  .genres .track {
+    background: var(--track);
+    height: 10px;
+    overflow: hidden;
+  }
+  .genres .bar {
+    height: 10px;
+    background: var(--accent-secondary);
+  }
+  .genres .row.top .bar { background: var(--accent); }
+  .genres .count {
+    text-align: right;
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--text-high);
+  }
+
+  /* Book list */
+  .book-list {
+    background: var(--book-list-bg);
+    padding: 28px 24px;
+    margin-top: 24px;
+  }
+  .book-list .month-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    border-bottom: 1px solid var(--rule-strong);
+    padding-bottom: 6px;
+    margin-top: 24px;
+  }
+  .book-list .month-header:first-of-type { margin-top: 8px; }
+  .book-list .month-header .count {
+    color: var(--count-grey);
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+  .book-list .book {
+    display: grid;
+    grid-template-columns: 28px 1fr;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 0.5px solid var(--row-rule);
+    align-items: baseline;
+  }
+  .book-list .book:last-child { border-bottom: none; }
+  .book-list .num {
+    text-align: right;
+    font-size: 10px;
+    color: var(--num-grey);
+  }
+  .book-list .text {
+    font-size: 13px;
+    line-height: 1.4;
+  }
+  .book-list .text .title {
+    font-weight: 700;
+    color: var(--text-high);
+    margin-right: 8px;
+  }
+  .book-list .text .author {
+    font-size: 12px;
+    font-style: italic;
+    color: var(--author-grey);
+  }
+
+  .footer {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-style: italic;
+    padding: 32px 0 0;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header class="masthead">
+    <div>{% if first_name %}{{ first_name }}&rsquo;s Year in Books{% else %}Your Year in Books{% endif %}</div>
+    <div>{{ window_start_str }} &ndash; {{ window_end_str }}</div>
+    <div>{{ "{:,}".format(stats.total_books) }} books finished in the last 12 months</div>
+  </header>
+
+  <div class="divider"></div>
+
+  {% if highlight_cells %}
+  <section class="highlights">
+    {% for label, primary, detail in highlight_cells %}
+    <div class="cell">
+      <div class="label">{{ label }}</div>
+      <div class="primary">{{ primary }}</div>
+      <div class="detail">{{ detail }}</div>
+    </div>
+    {% endfor %}
+  </section>
+  <div class="divider"></div>
+  {% endif %}
+
+  <section>
+    <h2 class="section-heading">Books Read by Month</h2>
+    {% if peak_count %}<div class="chart-peak-note">Peak: {{ peak_count }} books in {{ peak_month_short }}</div>{% endif %}
+    <div class="chart">
+      {% for month_label, count in stats.books_per_month %}
+      <div class="month">
+        <div class="stack">
+          {% for _ in range(count) %}<div class="spine"></div>{% endfor %}
+        </div>
+        <div class="month-label">{{ month_label.split()[0] }} {{ month_label.split()[1][-2:] }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </section>
+
+  <div class="divider"></div>
+
+  <section class="genres">
+    <h2 class="section-heading">Top Genres</h2>
+    {% set max_val = genre_max %}
+    {% for label, value in genre_items %}
+    <div class="row {% if loop.index <= 2 %}top{% endif %}">
+      <div class="name">{{ label }}</div>
+      <div class="track"><div class="bar" style="width: {{ (value / max_val * 100) if max_val else 0 }}%;"></div></div>
+      <div class="count">{{ value }}</div>
+    </div>
+    {% endfor %}
+  </section>
+
+  <section class="book-list">
+    <h2 class="section-heading">What You Read in the Last 12 Months</h2>
+    {% for month, books in groups %}
+    <div class="month-header"><span>{{ month }}</span><span class="count">{{ books|length }}</span></div>
+    {% for num, title, author in books %}
+    <div class="book">
+      <div class="num">{{ num }}</div>
+      <div class="text">
+        <span class="title">{{ title }}</span><span class="author">{{ author }}</span>
+      </div>
+    </div>
+    {% endfor %}
+    {% endfor %}
+  </section>
+
+  <div class="footer">Source: Goodreads &middot; Generated {{ generated_str }}</div>
+</div>
+</body>
+</html>

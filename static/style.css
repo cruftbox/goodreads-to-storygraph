@@ -25,7 +25,7 @@ html, body {
 .hidden { display: none !important; }
 
 .panel {
-  max-width: 760px;
+  max-width: 1280px;
   margin: 32px auto;
   padding: 28px 32px;
   background: var(--panel-bg);
@@ -210,11 +210,15 @@ h2 {
   background: #fff;
 }
 
-.preview-web    { width: 600px; }
-.preview-social { width: 360px; }
+.preview-web,
+.preview-social {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+}
 
-@media (max-width: 700px) {
-  .preview-web, .preview-social { width: 100%; }
+.preview-block {
+  width: 100%;
 }
 
 .footnote {
