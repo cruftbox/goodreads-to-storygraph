@@ -1,6 +1,6 @@
 # goodreads-tools
 
-I'm a reader who likes to track what I've read. These are a couple of tools I built for myself to scratch that itch — sharing them here in case they're useful to someone else.
+I'm a reader who likes to track what I've read. These are a couple of tools I built for myself to scratch that itch, sharing them here in case they're useful to someone else.
 
 Two features:
 
