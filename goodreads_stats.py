@@ -120,9 +120,9 @@ def _compute_formats(stats: "Stats", style: str = "cards") -> list:
     # highlights section without squeezing other sections.
     extra_per_book = 0.18
     extra_books = max(0, n - 8)
-    web_h = 11.8 + extra_books * extra_per_book
-    pdf_h = 12.3 + extra_books * extra_per_book
-    social_h = 12.4 + extra_books * 0.16
+    web_h = 14.0 + extra_books * 0.22
+    pdf_h = 14.5 + extra_books * 0.22
+    social_h = 14.5 + extra_books * 0.20
 
     suffix = "" if style == "cards" else f"_{style}"
     return [
@@ -152,11 +152,11 @@ def _compute_height_ratios(stats: "Stats") -> list:
     n_books = stats.total_books
     n_months = sum(1 for _, count in stats.books_per_month if count > 0)
 
-    masthead = 2.10
-    highlights = 3.20
+    masthead = 2.20
+    highlights = 4.80   # 2x2 grid w/ 3 lines per cell + breathing room
     chart = 2.80
-    genres = 3.20
-    list_h = 0.50 + n_months * 0.60 + n_books * 0.30
+    genres = 3.40
+    list_h = 0.80 + n_months * 0.80 + n_books * 0.35
     return [masthead, highlights, chart, genres, list_h]
 
 
@@ -689,7 +689,7 @@ def _render_cards(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
         figure=fig,
         left=0.07, right=0.93, top=0.965, bottom=0.055,
         height_ratios=_compute_height_ratios(stats),
-        hspace=0.45,
+        hspace=0.65,
     )
 
     highlights = compute_highlights(stats)
@@ -1050,7 +1050,8 @@ def _draw_genres_v2(ax, genre_data, stats):
     carries the data."""
     items, uncategorized = genre_data
     _strip_axes(ax)
-    ax.set_facecolor("#F7F5F0")
+    # Match the page bg so the genres section has no visible box behind it.
+    ax.set_facecolor(COLOR_PAGE_BG)
 
     w_px, h_px, _ = _section_pixel_dims(ax)
     def afx(px): return px / max(1.0, w_px)
@@ -1177,16 +1178,19 @@ def _draw_book_list_grouped(ax, stats: Stats):
         return
 
     # Column geometry per spec.
-    num_col_right = afx(28)       # 20px column + small left padding
+    num_col_right = afx(28)
     title_col_left = afx(36)
-    title_col_right = title_col_left + 0.54  # 54% width column
-    author_col_left = title_col_right + afx(8)
+    fallback_author_x = title_col_left + 0.54 + afx(8)  # used only if bbox fails
 
-    # Sequential numbering top-down: highest at top.
+    # First pass: render number, title, and date column placeholder. Capture
+    # title artists so a second pass can place each author flush after its
+    # actual rendered title width — that avoids the title-vs-author overlap
+    # on long titles that the fixed-column layout caused.
+    pending_authors = []
     book_num = stats.total_books
 
     for gi, (month_label, books) in enumerate(groups):
-        # Group header: month left, count right
+        # Group header
         ax.text(0.0, y, month_label,
                 ha="left", va="top",
                 color="#B5341A", fontsize=10, fontweight="bold",
@@ -1196,32 +1200,24 @@ def _draw_book_list_grouped(ax, stats: Stats):
                 color="#bbb", fontsize=10,
                 transform=ax.transAxes)
         y -= afy(18)
-        # Rule under header
         ax.add_line(plt.Line2D(
             [0.0, 1.0], [y, y],
             transform=ax.transAxes, color="#1C1C1C", linewidth=1.0,
         ))
-        y -= afy(10)
+        y -= afy(12)
 
         for bi, (date, title, author) in enumerate(books):
-            # Sequential number, right-aligned in 20px column
             ax.text(num_col_right, y, str(book_num),
                     ha="right", va="top",
                     color="#ccc", fontsize=10,
                     transform=ax.transAxes)
-            # Title, 13px bold
-            ax.text(title_col_left, y, title,
-                    ha="left", va="top",
-                    color="#1C1C1C", fontsize=13, fontweight="bold",
-                    transform=ax.transAxes)
-            # Author, 12px italic
-            ax.text(author_col_left, y, author,
-                    ha="left", va="top",
-                    color="#888", fontsize=12, fontstyle="italic",
-                    transform=ax.transAxes)
+            t_title = ax.text(title_col_left, y, title,
+                              ha="left", va="top",
+                              color="#1C1C1C", fontsize=13, fontweight="bold",
+                              transform=ax.transAxes)
+            pending_authors.append((t_title, y, author))
             book_num -= 1
-            y -= afy(22)
-            # Row rule (except after last in group)
+            y -= afy(26)
             if bi < len(books) - 1:
                 ax.add_line(plt.Line2D(
                     [0.0, 1.0], [y, y],
@@ -1229,9 +1225,23 @@ def _draw_book_list_grouped(ax, stats: Stats):
                 ))
                 y -= afy(4)
 
-        # Gap before next group
         if gi < len(groups) - 1:
-            y -= afy(14)
+            y -= afy(16)
+
+    # Second pass: position each author flush after the rendered title width.
+    ax.figure.canvas.draw()
+    inv = ax.transAxes.inverted()
+    for t_title, row_y, author in pending_authors:
+        try:
+            bbox = t_title.get_window_extent()
+            x_end_axes, _ = inv.transform((bbox.x1, bbox.y0))
+            author_x = x_end_axes + afx(10)
+        except Exception:
+            author_x = fallback_author_x
+        ax.text(author_x, row_y, author,
+                ha="left", va="top",
+                color="#888", fontsize=12, fontstyle="italic",
+                transform=ax.transAxes)
 
 
 # ----- old book-list functions kept below for reference but no longer wired -----
@@ -1370,7 +1380,7 @@ def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
         figure=fig,
         left=0.08, right=0.92, top=0.95, bottom=0.05,
         height_ratios=_compute_height_ratios_editorial(stats),
-        hspace=0.50,
+        hspace=0.70,
     )
 
     highlights = compute_highlights(stats)
@@ -1437,7 +1447,7 @@ def _draw_masthead_editorial(ax, stats: Stats, fmt: dict | None = None) -> None:
     date_range = f"{stats.window_start.strftime('%B %Y')} – {stats.window_end.strftime('%B %Y')}"
     ax.text(0.5, 0.50, date_range,
             ha="center", va="center",
-            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="regular",
+            color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             family="serif",
             transform=ax.transAxes)
 
