@@ -35,13 +35,13 @@
   .container {
     max-width: 980px;
     margin: 0 auto;
-    padding: 56px 40px 80px;
+    padding: 40px 36px 56px;
   }
 
   /* ─────────── Masthead ─────────── */
   .masthead {
     text-align: center;
-    padding: 8px 0 32px;
+    padding: 4px 0 24px;
     border-bottom: 1.5px solid var(--ink);
   }
   .masthead h1 {
@@ -72,9 +72,9 @@
     color: var(--ink);
     text-transform: uppercase;
     letter-spacing: 0.24em;
-    padding-bottom: 12px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--ink);
-    margin: 0 0 28px;
+    margin: 0 0 20px;
     display: flex;
     justify-content: space-between;
     align-items: baseline;
@@ -87,14 +87,14 @@
     letter-spacing: 0.04em;
     text-transform: none;
   }
-  section.block { margin-top: 56px; }
+  section.block { margin-top: 40px; }
 
   /* ─────────── Stats strip ─────────── */
   .stats {
     display: grid;
     grid-template-columns: 1.1fr 1fr 1.4fr 1fr;
     gap: 0;
-    margin-top: 36px;
+    margin-top: 24px;
     padding: 4px 0;
   }
   .stat {
@@ -162,7 +162,7 @@
   .chart {
     display: flex;
     align-items: flex-end;
-    height: 240px;
+    height: 200px;
     gap: 10px;
     border-bottom: 1px solid var(--ink);
     position: relative;
@@ -293,14 +293,14 @@
   .genres .row.top .bar-row::before { background: var(--accent); height: 3px; top: -2px; }
 
   /* ─────────── Book list ─────────── */
-  .book-list { margin-top: 24px; }
+  .book-list { margin-top: 16px; }
   .month-header {
     display: grid;
     grid-template-columns: auto 1fr auto;
     align-items: center;
     gap: 16px;
-    margin-top: 36px;
-    padding-bottom: 8px;
+    margin-top: 24px;
+    padding-bottom: 6px;
     border-bottom: 1.5px solid var(--ink);
   }
   .month-header:first-of-type { margin-top: 0; }
@@ -328,7 +328,7 @@
     display: grid;
     grid-template-columns: 36px 1fr auto;
     gap: 20px;
-    padding: 14px 0;
+    padding: 9px 0;
     border-bottom: 1px solid var(--rule-soft);
     align-items: baseline;
   }
@@ -369,8 +369,8 @@
 
   /* ─────────── Footer ─────────── */
   .footer {
-    margin-top: 72px;
-    padding-top: 20px;
+    margin-top: 48px;
+    padding-top: 16px;
     border-top: 1px solid var(--rule);
     display: flex;
     justify-content: space-between;
@@ -382,15 +382,46 @@
   }
 
   @media (max-width: 720px) {
-    .container { padding: 36px 20px 56px; }
-    .stats { grid-template-columns: 1fr 1fr; }
-    .stat { padding: 16px; border-left: none; border-top: 1px solid var(--rule); }
+    /* Layout */
+    .container { padding: 32px 24px 56px; }
+    .stats { grid-template-columns: 1fr 1fr; margin-top: 20px; }
+    .stat { padding: 18px; border-left: none; border-top: 1px solid var(--rule); min-height: 0; }
     .stat:nth-child(2) { border-left: 1px solid var(--rule); border-top: 1px solid var(--rule); }
     .stat:nth-child(4) { border-left: 1px solid var(--rule); }
     .stat:nth-child(-n+2) { border-top: none; }
     .genres { grid-template-columns: 1fr; }
-    .book { grid-template-columns: 28px 1fr; }
+    .book { grid-template-columns: 36px 1fr; padding: 11px 0; }
     .book .author { grid-column: 2; text-align: left; white-space: normal; padding-top: 4px; }
+
+    /* Type scale — viewport 540 displayed on ~360pt phone needs everything
+       roughly 1.7× the desktop size so body text reads at ~14pt logical. */
+    .masthead h1 { font-size: 52px; }
+    .masthead .date { font-size: 21px; }
+    .section-heading { font-size: 18px; padding-bottom: 12px; margin: 0 0 22px; }
+    .section-heading .aside { font-size: 17px; }
+    .stat .label { font-size: 16px; margin-bottom: 12px; letter-spacing: 0.16em; }
+    .stat .primary { font-size: 42px; }
+    .stat .primary.numeric { font-size: 76px; }
+    .stat .primary .small { font-size: 26px; }
+    .stat .detail { font-size: 17px; padding-top: 10px; }
+
+    .chart { gap: 8px; }
+    .chart .gridline span { font-size: 16px; top: -11px; padding: 0 6px; }
+    .month-labels { gap: 8px; }
+    .month-labels .ml { font-size: 17px; }
+    .month-labels .ml .yr { font-size: 14px; }
+
+    .genres .name { font-size: 18px; }
+    .genres .count { font-size: 26px; }
+
+    .month-header .mh-name { font-size: 18px; letter-spacing: 0.2em; }
+    .month-header .mh-count { font-size: 19px; }
+    .book .num { font-size: 21px; }
+    .book .title { font-size: 26px; line-height: 1.25; }
+    .book .title .series { font-size: 19px; }
+    .book .author { font-size: 16px; letter-spacing: 0.1em; }
+
+    .footer { font-size: 15px; margin-top: 40px; }
   }
 </style>
 </head>

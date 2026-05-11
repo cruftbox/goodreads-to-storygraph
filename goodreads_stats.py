@@ -108,11 +108,21 @@ def fetch_read_shelf(user_id: str, timeout: int = 30) -> tuple:
 
     items = soup.find_all("item")
     books = []
+    skipped_no_date: list = []
     for item in items:
         try:
             books.append(_parse_item(item))
+        except _NoReadDate as e:
+            skipped_no_date.append(e.title)
         except Exception as e:
             logging.warning("Skipping unparseable RSS item: %s", e)
+    if skipped_no_date:
+        logging.warning(
+            "Skipped %d book(s) with no read date set on Goodreads; "
+            "set a finish date on each to include them: %s",
+            len(skipped_no_date),
+            ", ".join(repr(t) for t in skipped_no_date),
+        )
     return books, first_name
 
 
@@ -139,6 +149,17 @@ def _text(elem) -> str:
     return elem.text.strip() if elem and elem.text else ""
 
 
+class _NoReadDate(Exception):
+    """Raised when an RSS item has no user_read_at value.
+
+    Surfaces the title so the caller can log which books were skipped — that's
+    the actionable information for the user (set a read date on Goodreads)."""
+
+    def __init__(self, title: str) -> None:
+        super().__init__(title)
+        self.title = title
+
+
 def _parse_item(item) -> Book:
     title = _text(item.find("title"))
     author = _text(item.find("author_name"))
@@ -151,9 +172,14 @@ def _parse_item(item) -> Book:
     rating_text = _text(item.find("user_rating"))
     user_rating = int(rating_text) if rating_text.isdigit() and int(rating_text) > 0 else None
 
-    read_at_text = _text(item.find("user_read_at")) or _text(item.find("user_date_added"))
+    # Use ONLY user_read_at — the date the user marked the book as finished.
+    # Do NOT fall back to user_date_added: that's the date the entry was last
+    # touched on the shelf (re-shelving, migrations, edits), which can attribute
+    # a book read decades ago to a recent month and corrupt the windowed view.
+    # Books without a read date are skipped so the user can set one on Goodreads.
+    read_at_text = _text(item.find("user_read_at"))
     if not read_at_text:
-        raise ValueError("no usable date")
+        raise _NoReadDate(title or "<unknown title>")
     user_read_at = datetime.strptime(read_at_text, "%a, %d %b %Y %H:%M:%S %z").astimezone()
 
     # Pull the Goodreads book ID for the optional page-scrape genre fallback.
@@ -575,22 +601,34 @@ def _split_title_series(title: str) -> tuple:
 
 def _gridline_levels(max_books: int) -> list:
     """Return a list of (value, percent_from_bottom, label) tuples for the
-    chart's dotted gridlines. We want ~2-3 gridlines between 0 and the max,
-    skipping 0 (and only showing the max if it's a tidy round value)."""
+    chart's dotted gridlines. Positions match the actual bar-stack geometry
+    in the CSS: each spine is 16px tall with a 2px gap, in a 200px-tall chart
+    container. So a V-spine bar's top sits at (V*16 + (V-1)*2) px from the
+    chart bottom. The peak value is always labeled so the scale is unambiguous.
+    """
     if max_books <= 0:
         return []
-    # Aim for two intermediate gridlines.
-    third = max(1, max_books // 3)
-    two_thirds = max(2, (max_books * 2) // 3)
+    chart_h = 200  # px; must match .chart height in the template
+    spine_h = 16
+    gap = 2
+
+    def position_pct(v: int) -> float:
+        bar_top_px = v * spine_h + max(0, v - 1) * gap
+        return round(100.0 * bar_top_px / chart_h, 2)
+
+    values = []
+    # One intermediate gridline at roughly the midpoint when there's room.
+    if max_books >= 4:
+        mid = max_books // 2
+        if mid > 0 and mid < max_books:
+            values.append(mid)
+    values.append(max_books)
+
     levels = []
-    seen = set()
-    for v in (third, two_thirds):
-        if v in seen or v >= max_books:
-            continue
-        seen.add(v)
+    for v in values:
         levels.append({
             "value": v,
-            "percent": round(100.0 * v / max_books, 1),
+            "percent": position_pct(v),
             "label": str(v),
         })
     return levels
@@ -793,8 +831,11 @@ def render_html_outputs(html_path: Path, output_dir: Path) -> dict:
             out["pdf"] = pdf_path
             page.close()
 
-            # ---- Web PNG (desktop viewport, full page) ----
-            ctx = browser.new_context(viewport={"width": 1200, "height": 1600},
+            # ---- Web PNG (desktop viewport sized to match typical embed
+            # widths (~720-800px logical). DPR=2 keeps it crisp on retina;
+            # rendering at this viewport instead of 1200 prevents the heavy
+            # downscale that made the previous 2400px-wide PNG hard to read. ----
+            ctx = browser.new_context(viewport={"width": 800, "height": 1200},
                                       device_scale_factor=2)
             page = ctx.new_page()
             page.goto(html_url, wait_until="networkidle")
@@ -804,8 +845,11 @@ def render_html_outputs(html_path: Path, output_dir: Path) -> dict:
             ctx.close()
 
             # ---- Social PNG (mobile viewport — triggers the responsive
-            # layout in the template's @media (max-width: 720px) rules) ----
-            ctx = browser.new_context(viewport={"width": 720, "height": 1280},
+            # layout in the template's @media (max-width: 720px) rules).
+            # Viewport 540 × DPR 2 = 1080-wide PNG, which matches Instagram
+            # Stories native dimensions (1080×1920) so the image displays
+            # 1:1 on a phone instead of getting downscaled. ----
+            ctx = browser.new_context(viewport={"width": 540, "height": 960},
                                       device_scale_factor=2)
             page = ctx.new_page()
             page.goto(html_url, wait_until="networkidle")
