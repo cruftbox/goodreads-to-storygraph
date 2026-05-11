@@ -1694,10 +1694,50 @@ def _draw_footer_editorial(fig, stats: Stats) -> None:
 
 # -------- HTML report (separate from matplotlib pipeline) --------
 
+def _split_title_series(title: str) -> tuple:
+    """If a title ends with ' (...)' that looks like series metadata
+    (contains a # number, comma, or words like 'series'/'cycle'/'trilogy'),
+    split it into (main_title, series_text). Otherwise return (title, None)."""
+    import re as _re
+    m = _re.match(r"^(.*?)\s*\(([^()]+)\)\s*$", title)
+    if not m:
+        return (title, None)
+    inner = m.group(2)
+    indicators = ("#", ",")
+    words = ("series", "cycle", "trilogy", "volume", "book ", "saga", "duology")
+    if any(c in inner for c in indicators) or any(w in inner.lower() for w in words):
+        return (m.group(1).rstrip(), inner)
+    return (title, None)
+
+
+def _gridline_levels(max_books: int) -> list:
+    """Return a list of (value, percent_from_bottom, label) tuples for the
+    chart's dotted gridlines. We want ~2-3 gridlines between 0 and the max,
+    skipping 0 (and only showing the max if it's a tidy round value)."""
+    if max_books <= 0:
+        return []
+    # Aim for two intermediate gridlines.
+    third = max(1, max_books // 3)
+    two_thirds = max(2, (max_books * 2) // 3)
+    levels = []
+    seen = set()
+    for v in (third, two_thirds):
+        if v in seen or v >= max_books:
+            continue
+        seen.add(v)
+        levels.append({
+            "value": v,
+            "percent": round(100.0 * v / max_books, 1),
+            "label": str(v),
+        })
+    return levels
+
+
 def render_html_report(stats: Stats, genre_data, output_path: Path) -> Path:
     """Render the full year-in-books as standalone HTML/CSS using Jinja2.
-    Independent of the matplotlib pipeline — text renders natively in the
-    browser at any zoom level. Returns the path written."""
+    Templated against year_in_books_report.html — editorial typographic
+    design with Fraunces serif + Inter sans, warm cream palette, terracotta
+    accent. Independent of the matplotlib pipeline."""
     from jinja2 import Environment, FileSystemLoader, select_autoescape
 
     templates_dir = Path(__file__).resolve().parent / "templates"
@@ -1707,55 +1747,122 @@ def render_html_report(stats: Stats, genre_data, output_path: Path) -> Path:
     )
     template = env.get_template("year_in_books_report.html")
 
-    # Highlights as a list of (label, primary, detail) tuples in display order.
-    highlights = compute_highlights(stats)
-    highlight_cells = [
-        highlights[k] for k in ("peak_month", "top_author", "longest", "avg_pages")
-        if k in highlights
-    ]
-
-    # Genre items + max for percentage math
-    genre_items = genre_data[0] if genre_data else []
-    genre_max = max((v for _, v in genre_items), default=1)
-
-    # Peak month for the chart note
+    # ----- Stats strip (four highlights) -----
+    stats_strip: list = []
+    # Peak month
     peak_count = 0
     peak_month_short = ""
     if stats.books_per_month:
         peak_label, peak_count = max(stats.books_per_month, key=lambda x: x[1])
         if peak_count > 0:
             parts = peak_label.split()
-            peak_month_short = f"{parts[0]} {parts[1][-2:]}" if len(parts) == 2 else peak_label
+            month_name = parts[0]
+            year_short = parts[1][-2:] if len(parts) == 2 else ""
+            peak_month_short = f"{month_name} '{year_short}" if year_short else month_name
+            stats_strip.append({
+                "label": "Peak Month",
+                "primary": month_name,
+                "primary_small": f"&rsquo;{year_short}" if year_short else None,
+                "detail": f"{peak_count} books — the year&rsquo;s most prolific stretch",
+                "numeric": True,
+            })
 
-    # Group books by month with sequential numbering top-down.
+    # Books read
+    if stats.total_books:
+        stats_strip.append({
+            "label": "Books Read",
+            "primary": f"{stats.total_books:,}",
+            "primary_small": None,
+            "detail": "finished cover-to-cover this year",
+            "numeric": True,
+        })
+
+    # Longest read
+    with_pages = [b for b in stats.books if b.num_pages]
+    if with_pages:
+        longest = max(with_pages, key=lambda b: b.num_pages)
+        long_title, _ = _split_title_series(longest.title)
+        stats_strip.append({
+            "label": "Longest Read",
+            "primary": long_title,
+            "primary_small": None,
+            "detail": f"{longest.num_pages:,} pages &middot; {longest.author}",
+            "numeric": False,
+        })
+        # Average length
+        avg = stats.total_pages // max(1, len(with_pages))
+        stats_strip.append({
+            "label": "Average Length",
+            "primary": f"{avg:,}",
+            "primary_small": "pp.",
+            "detail": f"per book, across {len(with_pages)} finished",
+            "numeric": True,
+        })
+
+    # ----- Chart data -----
+    max_books = max((c for _, c in stats.books_per_month), default=0)
+    months_data = []
+    for label, count in stats.books_per_month:
+        parts = label.split()
+        short_name = parts[0] if parts else label
+        year_short = parts[1][-2:] if len(parts) == 2 else ""
+        months_data.append({
+            "label": label,
+            "short_name": short_name,
+            "year_short": year_short,
+            "count": count,
+            "peak": count > 0 and count == max_books,
+        })
+
+    gridlines = _gridline_levels(max_books)
+
+    # ----- Genres -----
+    genre_items = genre_data[0] if genre_data else []
+    genre_max = max((v for _, v in genre_items), default=1)
+    # Editorial aside: derive a short headline from the data
+    genre_aside = None
+    if genre_items:
+        top_label, top_count = genre_items[0]
+        if top_count >= stats.total_books * 0.4:
+            genre_aside = f"a {top_label.lower()}-heavy year"
+        elif len(genre_items) >= 5:
+            genre_aside = "a wide-ranging year"
+
+    # ----- Book list groups -----
     groups: list = []
     cur_label = None
     cur_list: list = []
     num = stats.total_books
     for date, title, author in stats.book_titles:
-        label = date.strftime("%B %Y").upper()
+        label = date.strftime("%B %Y")
         if label != cur_label:
             if cur_list:
                 groups.append((cur_label, cur_list))
             cur_label = label
             cur_list = []
-        cur_list.append((num, title, author))
+        main_title, series = _split_title_series(title)
+        cur_list.append((num, main_title, series, author))
         num -= 1
     if cur_list:
         groups.append((cur_label, cur_list))
 
+    # ----- Render -----
+    today = datetime.now().astimezone()
     html = template.render(
         stats=stats,
         first_name=stats.first_name,
         window_start_str=stats.window_start.strftime("%B %Y"),
         window_end_str=stats.window_end.strftime("%B %Y"),
-        highlight_cells=highlight_cells,
+        stats_strip=stats_strip,
         peak_count=peak_count,
         peak_month_short=peak_month_short,
+        months=months_data,
+        gridlines=gridlines,
         genre_items=genre_items,
         genre_max=genre_max,
+        genre_aside=genre_aside,
         groups=groups,
-        generated_str=stats.window_end.strftime("%b %d, %Y"),
+        generated_str=today.strftime("%d %B %Y"),
     )
     output_path = Path(output_path)
     output_path.write_text(html, encoding="utf-8")
