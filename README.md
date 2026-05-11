@@ -59,12 +59,14 @@ You can also run either feature directly from the command line — see the per-f
 
 ## Feature: Year in Books report
 
-Pulls your Goodreads **read shelf** RSS feed, windows the books to the last 12 months from today, looks up genres via the Google Books API (with a Goodreads page-scrape fallback when Google Books comes up empty), then renders an editorial one-page report in four formats:
+Pulls your Goodreads **read shelf** RSS feed, windows the books to the last 12 months from today, looks up genres via the Google Books API (with a Goodreads page-scrape fallback when Google Books comes up empty), then renders an editorial one-page report in several formats:
 
 - `output/year_in_books.html` — the single source of truth, generated from a Jinja2 template
 - `output/year_in_books.pdf` — Letter portrait, vector
-- `output/year_in_books_web.png` — 1200×1800, for embedding or sharing
-- `output/year_in_books_social.png` — 1080×1920, sized for Instagram Stories
+- `output/year_in_books_web.png` — 1600px wide, full-page render for web embed
+- `output/year_in_books_social.png` — 1080×1920 card (9:16), a dense poster format with masthead + stats + chart + the full book list. Sized for Instagram Stories and feed-based social platforms (Bluesky, Mastodon)
+
+Books on your Goodreads shelf with no read date set are skipped (they have no place in a date-windowed view). A warning lists their titles after rendering so you can fix them on Goodreads if you want them included.
 
 Rendering uses Playwright (headless Chromium) to print the HTML to PDF and screenshot it at two breakpoints, so PDF and web output stay perfectly consistent with what you see in a browser.
 

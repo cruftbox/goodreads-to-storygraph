@@ -382,10 +382,13 @@
   }
 
   @media (max-width: 720px) {
-    /* Layout */
-    .container { padding: 32px 24px 56px; }
-    .stats { grid-template-columns: 1fr 1fr; margin-top: 20px; }
-    .stat { padding: 18px; border-left: none; border-top: 1px solid var(--rule); min-height: 0; }
+    /* Layout — tightened so masthead + stats + chart fits inside the 540×960
+       CSS-pixel clip used for the social card (1080×1920 PNG). */
+    .container { padding: 20px 24px 56px; }
+    .masthead { padding: 0 0 16px; }
+    section.block { margin-top: 24px; }
+    .stats { grid-template-columns: 1fr 1fr; margin-top: 14px; }
+    .stat { padding: 14px; border-left: none; border-top: 1px solid var(--rule); min-height: 0; }
     .stat:nth-child(2) { border-left: 1px solid var(--rule); border-top: 1px solid var(--rule); }
     .stat:nth-child(4) { border-left: 1px solid var(--rule); }
     .stat:nth-child(-n+2) { border-top: none; }
@@ -395,25 +398,26 @@
 
     /* Type scale — viewport 540 displayed on ~360pt phone needs everything
        roughly 1.7× the desktop size so body text reads at ~14pt logical. */
-    .masthead h1 { font-size: 52px; }
-    .masthead .date { font-size: 21px; }
-    .section-heading { font-size: 18px; padding-bottom: 12px; margin: 0 0 22px; }
-    .section-heading .aside { font-size: 17px; }
-    .stat .label { font-size: 16px; margin-bottom: 12px; letter-spacing: 0.16em; }
-    .stat .primary { font-size: 42px; }
-    .stat .primary.numeric { font-size: 76px; }
-    .stat .primary .small { font-size: 26px; }
-    .stat .detail { font-size: 17px; padding-top: 10px; }
+    .masthead h1 { font-size: 44px; margin-bottom: 12px; }
+    .masthead .date { font-size: 19px; }
+    .section-heading { font-size: 17px; padding-bottom: 10px; margin: 0 0 16px; }
+    .section-heading .aside { font-size: 16px; }
+    .stat .label { font-size: 15px; margin-bottom: 10px; letter-spacing: 0.16em; }
+    .stat .primary { font-size: 36px; }
+    .stat .primary.numeric { font-size: 64px; }
+    .stat .primary .small { font-size: 22px; }
+    .stat .detail { font-size: 16px; padding-top: 8px; }
 
     .chart { gap: 8px; }
-    .chart .gridline span { font-size: 16px; top: -11px; padding: 0 6px; }
-    .month-labels { gap: 8px; }
+    .chart .gridline span { font-size: 15px; top: -10px; padding: 0 6px; }
+    .month-labels { gap: 8px; margin-top: 8px; }
     .month-labels .ml { font-size: 17px; }
     .month-labels .ml .yr { font-size: 14px; }
 
     .genres .name { font-size: 18px; }
     .genres .count { font-size: 26px; }
 
+    .month-header { margin-top: 28px; }
     .month-header .mh-name { font-size: 18px; letter-spacing: 0.2em; }
     .month-header .mh-count { font-size: 19px; }
     .book .num { font-size: 21px; }
@@ -422,6 +426,99 @@
     .book .author { font-size: 16px; letter-spacing: 0.1em; }
 
     .footer { font-size: 15px; margin-top: 40px; }
+
+    /* ─────────── Card mode (9:16 social) ───────────
+       Activated by adding `card-mode` to <body> before the clipped 540×960
+       screenshot. Compresses masthead, switches stats to a single horizontal
+       row, shrinks the chart, drops month-headers + top-genres + footer,
+       and flows the book list into 2 dense columns so masthead + stats +
+       chart + every book fits inside 1080×1920. */
+    .card-mode .container { padding: 12px 18px 6px; }
+    .card-mode .masthead { padding: 0 0 8px; border-bottom-width: 1px; }
+    .card-mode .masthead h1 { font-size: 30px; margin: 0 0 4px; line-height: 1; }
+    .card-mode .masthead .date { font-size: 12px; letter-spacing: 0.2em; }
+
+    .card-mode section.block { margin-top: 10px; }
+    .card-mode .section-heading {
+      font-size: 12px;
+      padding-bottom: 5px;
+      margin: 0 0 6px;
+      letter-spacing: 0.18em;
+    }
+    .card-mode .section-heading .aside { font-size: 11px; }
+
+    .card-mode .stats { grid-template-columns: 1fr 1fr 1fr 1fr; margin-top: 0; }
+    .card-mode .stat {
+      padding: 4px 10px;
+      border-top: none;
+      border-left: 1px solid var(--rule);
+    }
+    .card-mode .stat:nth-child(2),
+    .card-mode .stat:nth-child(4) { border-top: none; }
+    .card-mode .stat:first-child { border-left: none; padding-left: 0; }
+    .card-mode .stat:last-child { padding-right: 0; }
+    .card-mode .stat .label { font-size: 10px; margin-bottom: 4px; letter-spacing: 0.14em; }
+    .card-mode .stat .primary { font-size: 22px; line-height: 1.05; margin-bottom: 2px; }
+    .card-mode .stat .primary.numeric { font-size: 34px; }
+    .card-mode .stat .primary .small { font-size: 13px; }
+    .card-mode .stat .detail {
+      font-size: 10px;
+      padding-top: 4px;
+      line-height: 1.25;
+    }
+
+    .card-mode .chart { height: 80px; gap: 5px; }
+    .card-mode .chart .stack { gap: 1px; }
+    .card-mode .chart .spine { height: 6px; }
+    .card-mode .chart .gridline span { font-size: 10px; top: -6px; padding: 0 4px; }
+    .card-mode .month-labels { gap: 5px; margin-top: 4px; }
+    .card-mode .month-labels .ml { font-size: 11px; }
+    .card-mode .month-labels .ml .yr { font-size: 8px; margin-top: 1px; }
+
+    /* Drop sections that don't fit */
+    .card-mode .footer { display: none; }
+    .card-mode section.block.genres-section { display: none; }
+
+    /* Book list — 2 columns of compact rows, no month headers */
+    .card-mode .book-list {
+      margin-top: 6px;
+      column-count: 2;
+      column-gap: 14px;
+    }
+    .card-mode .month-header { display: none; }
+    .card-mode .book {
+      grid-template-columns: 20px 1fr;
+      gap: 6px;
+      padding: 2px 0;
+      break-inside: avoid;
+      border-bottom: 1px solid var(--rule-soft);
+      min-width: 0;
+    }
+    .card-mode .book .num {
+      font-size: 10px;
+      text-align: right;
+    }
+    .card-mode .book .title {
+      font-size: 11px;
+      line-height: 1.2;
+      letter-spacing: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      min-width: 0;
+    }
+    .card-mode .book .title .series { display: none; }
+    .card-mode .book .author {
+      grid-column: 2;
+      font-size: 9px;
+      letter-spacing: 0.06em;
+      padding-top: 0;
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-width: 0;
+    }
   }
 </style>
 </head>
@@ -480,7 +577,7 @@
 
   {% if genre_items %}
   <!-- ─────────── Genres ─────────── -->
-  <section class="block">
+  <section class="block genres-section">
     <h2 class="section-heading">
       <span>Top Genres</span>
       {% if genre_aside %}<span class="aside">{{ genre_aside }}</span>{% endif %}

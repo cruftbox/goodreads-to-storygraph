@@ -3,7 +3,7 @@
 Fetches the Goodreads read-shelf RSS, windows to the last 12 months,
 looks up genres via Google Books (and falls back to Goodreads page
 scrape when needed), renders an editorial HTML report via Jinja2, then
-prints/screenshots the HTML to PDF, web PNG, and social PNG via
+prints/screenshots the HTML to PDF, web PNG, and 9:16 social card PNG via
 headless Chromium (Playwright). The HTML is the single source of truth
 for design — there's no separate chart-rendering pipeline.
 """
@@ -805,9 +805,10 @@ def generate(user_id: str, output_dir: Path, today: Optional[datetime] = None) -
 
 
 def render_html_outputs(html_path: Path, output_dir: Path) -> dict:
-    """Render the HTML report to PDF, web PNG, and social PNG via headless
-    Chromium (Playwright). Single browser launch shared across the three
-    renders for speed. Returns a dict of {format: path}."""
+    """Render the HTML report to PDF, web PNG, and 9:16 social card PNG
+    via headless Chromium (Playwright). Single browser launch shared
+    across the renders for speed. Returns a dict of {format: path} with
+    keys: pdf, web, social."""
     from playwright.sync_api import sync_playwright
 
     html_path = Path(html_path).resolve()
@@ -844,17 +845,26 @@ def render_html_outputs(html_path: Path, output_dir: Path) -> dict:
             out["web"] = web_path
             ctx.close()
 
-            # ---- Social PNG (mobile viewport — triggers the responsive
-            # layout in the template's @media (max-width: 720px) rules).
-            # Viewport 540 × DPR 2 = 1080-wide PNG, which matches Instagram
-            # Stories native dimensions (1080×1920) so the image displays
-            # 1:1 on a phone instead of getting downscaled. ----
+            # ---- Social card (9:16, 1080×1920) ----
+            # Viewport 540 × DPR 2 = 1080-wide output. The @media (max-width:
+            # 720px) rules in the template trigger at this viewport, applying
+            # the larger mobile type scale. Adding `card-mode` to <body>
+            # activates the dense 9:16 layout (masthead + stats + chart +
+            # 2-col book list) defined in the template's .card-mode CSS,
+            # which is then clipped to 540×960 CSS px (= 1080×1920 PNG at
+            # DPR=2). This format fits feed-based platforms (Bluesky,
+            # Mastodon, Instagram Stories) without the cropping/blurring
+            # that very tall images get on those services.
             ctx = browser.new_context(viewport={"width": 540, "height": 960},
                                       device_scale_factor=2)
             page = ctx.new_page()
             page.goto(html_url, wait_until="networkidle")
+            page.evaluate("document.body.classList.add('card-mode')")
             social_path = output_dir / "year_in_books_social.png"
-            page.screenshot(path=str(social_path), full_page=True)
+            page.screenshot(
+                path=str(social_path),
+                clip={"x": 0, "y": 0, "width": 540, "height": 960},
+            )
             out["social"] = social_path
             ctx.close()
         finally:

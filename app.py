@@ -3,7 +3,7 @@
 Two buttons:
   - Sync to StoryGraph: spawns book_sync.py as a subprocess, streams the log.
   - Generate Year in Books: runs the goodreads_stats pipeline and exposes the
-    three generated files (PDF, web PNG, social PNG) as downloads.
+    three generated files (PDF, web PNG, social card PNG) as downloads.
 
 Binds to 127.0.0.1 only. No auth.
 """
