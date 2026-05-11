@@ -143,16 +143,17 @@ def _compute_formats(stats: "Stats", style: str = "cards") -> list:
 
 
 def _compute_height_ratios(n_list_lines: int) -> list:
-    """Section ratios for the four-section layout: combined title+hero,
-    monthly chart, genres, book list. Title and hero merged into one card
-    so the top of the page doesn't feel like two empty boxes."""
-    masthead = 2.10   # 3 lines of equal-size type with generous spacing
+    """Section ratios for the five-section layout: masthead, highlights,
+    monthly chart, genres, book list."""
+    masthead = 2.10
+    highlights = 1.55   # 3-line stats need more vertical room than the old single-value version
     chart = 2.80
     genres = 2.55
-    # Bumped per-line allocation again (0.30 → 0.36) plus a smaller
-    # baseline so the section title sits closer to the first entry.
-    list_h = 0.45 + n_list_lines * 0.36
-    return [masthead, chart, genres, list_h]
+    # Per-line allocation bumped 0.36 → 0.50 — the user has flagged
+    # "still tight" line spacing repeatedly. Figure height grows so this
+    # does not crowd anything else.
+    list_h = 0.45 + n_list_lines * 0.50
+    return [masthead, highlights, chart, genres, list_h]
 
 
 # -------- data classes --------
@@ -273,6 +274,50 @@ def _parse_item(item) -> Book:
 
 
 # -------- aggregate --------
+
+def compute_highlights(stats: "Stats") -> dict:
+    """Pull a few editorial 'numbers worth knowing' from the year's data.
+    Each entry is (label, primary, detail). Missing data is omitted rather
+    than shown as a placeholder. The three-part shape supports a label /
+    big-value / small-caption render in each highlight column."""
+    h: dict = {}
+
+    # Peak reading month
+    if stats.books_per_month:
+        peak_label, peak_count = max(stats.books_per_month, key=lambda x: x[1])
+        if peak_count > 0:
+            month_name = peak_label.split()[0]
+            plural = "books" if peak_count != 1 else "book"
+            h["peak_month"] = ("Peak month", month_name, f"{peak_count} {plural}")
+
+    # Most-read author
+    by_author: dict = {}
+    for b in stats.books:
+        if b.author:
+            by_author[b.author] = by_author.get(b.author, 0) + 1
+    if by_author:
+        top_author, count = max(by_author.items(), key=lambda kv: (kv[1], -len(kv[0])))
+        if count >= 2:
+            h["top_author"] = (
+                "Most-read author",
+                _truncate_label(top_author, 18),
+                f"{count} books",
+            )
+
+    # Longest book + average pages
+    with_pages = [b for b in stats.books if b.num_pages]
+    if with_pages:
+        longest = max(with_pages, key=lambda b: b.num_pages)
+        h["longest"] = (
+            "Longest book",
+            _truncate_label(longest.title, 18),
+            f"{longest.num_pages:,} pages",
+        )
+        avg = stats.total_pages // max(1, len(with_pages))
+        h["avg_pages"] = ("Average length", f"{avg:,}", "pages per book")
+
+    return h
+
 
 def aggregate_last_12_months(
     books: list,
@@ -637,22 +682,25 @@ def _render_cards(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
 
     n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
     gs = GridSpec(
-        nrows=4, ncols=1,
+        nrows=5, ncols=1,
         figure=fig,
         left=0.07, right=0.93, top=0.965, bottom=0.055,
         height_ratios=_compute_height_ratios(n_list_lines),
         hspace=0.45,
     )
 
+    highlights = compute_highlights(stats)
+
     # Card backgrounds drawn first so they sit behind every chart artist.
     _draw_section_cards(fig, gs)
 
     _draw_masthead(fig.add_subplot(gs[0]), stats)
-    _draw_books_per_month(fig.add_subplot(gs[1]), stats, fmt=fmt)
-    genre_ax = fig.add_subplot(gs[2])
+    _draw_highlights_cards(fig.add_subplot(gs[1]), highlights)
+    _draw_books_per_month(fig.add_subplot(gs[2]), stats, fmt=fmt)
+    genre_ax = fig.add_subplot(gs[3])
     _draw_genres(genre_ax, genre_data, stats)
     _set_subplot_left(genre_ax, 0.25)
-    _draw_book_list(fig.add_subplot(gs[3]), stats, fmt=fmt)
+    _draw_book_list(fig.add_subplot(gs[4]), stats, fmt=fmt)
 
     _draw_footer(fig, stats)
 
@@ -749,6 +797,45 @@ def _draw_masthead(ax, stats: Stats):
             ha="center", va="center",
             color=COLOR_TEXT_HIGH, fontsize=masthead_size, fontweight="bold",
             transform=ax.transAxes)
+
+
+def _draw_highlights_cards(ax, highlights: dict) -> None:
+    """Four small stat callouts in a row, each a label + a value. Card
+    style: subtle dividers between them, no separate cards-per-stat."""
+    _strip_axes(ax)
+    ax.set_facecolor(COLOR_CARD_BG)
+
+    keys = [k for k in ("peak_month", "top_author", "longest", "avg_pages") if k in highlights]
+    if not keys:
+        return
+
+    n = len(keys)
+    for i, key in enumerate(keys):
+        label, primary, detail = highlights[key]
+        x = (i + 0.5) / n  # center each stat in its column
+        # Three lines per column: label up top, big value in the middle,
+        # small caption below.
+        ax.text(x, 0.85, label.upper(),
+                ha="center", va="center",
+                color=COLOR_TEXT_MUTED, fontsize=8.5, fontweight="bold",
+                transform=ax.transAxes)
+        ax.text(x, 0.50, primary,
+                ha="center", va="center",
+                color=COLOR_TEXT_HIGH, fontsize=14, fontweight="bold",
+                transform=ax.transAxes)
+        ax.text(x, 0.18, detail,
+                ha="center", va="center",
+                color=COLOR_TEXT_MUTED, fontsize=10, fontweight="regular",
+                transform=ax.transAxes)
+        # Vertical divider between columns
+        if i < n - 1:
+            x_div = (i + 1) / n
+            line = plt.Line2D(
+                [x_div, x_div], [0.15, 0.85],
+                transform=ax.transAxes,
+                color=COLOR_DIVIDER, linewidth=0.6,
+            )
+            ax.add_line(line)
 
 
 def _draw_books_per_month(ax, stats: Stats, fmt: dict | None = None):
@@ -936,7 +1023,9 @@ def _draw_book_list(ax, stats: Stats, fmt: dict | None = None, list_max: int | N
     # With variable figure height (the section grows to fit), we don't
     # need to shrink type aggressively — the figure simply gets taller for
     # readers who finish more books.
-    if n_lines <= 24:
+    if n_lines <= 18:
+        font_size = 14
+    elif n_lines <= 30:
         font_size = 13
     elif n_lines <= 50:
         font_size = 12
@@ -1023,14 +1112,14 @@ COLOR_EDITORIAL_RULE = "#b8b3a3"      # editorial horizontal rule — paper grey
 
 
 def _compute_height_ratios_editorial(n_list_lines: int) -> list:
-    """Editorial layout: matches the cards layout — same proportions, just
-    no card backgrounds and hairline rules between sections instead. The
-    user has already tuned these ratios; don't drift from them."""
+    """Editorial layout — matches cards proportions section-by-section but
+    with no card backgrounds and hairline rules instead."""
     masthead = 2.10
+    highlights = 1.55
     chart = 2.80
     genres = 2.55
-    list_h = 0.45 + n_list_lines * 0.36
-    return [masthead, chart, genres, list_h]
+    list_h = 0.45 + n_list_lines * 0.50
+    return [masthead, highlights, chart, genres, list_h]
 
 
 def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
@@ -1038,26 +1127,66 @@ def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
 
     n_list_lines = fmt.get("list_lines_estimate", stats.total_books + 1)
     gs = GridSpec(
-        nrows=4, ncols=1,
+        nrows=5, ncols=1,
         figure=fig,
         left=0.08, right=0.92, top=0.95, bottom=0.05,
         height_ratios=_compute_height_ratios_editorial(n_list_lines),
         hspace=0.50,
     )
 
+    highlights = compute_highlights(stats)
+
     # No section cards — sections sit directly on the page background.
     _draw_masthead_editorial(fig.add_subplot(gs[0]), stats)
-    _draw_books_per_month_editorial(fig.add_subplot(gs[1]), stats, fmt=fmt)
-    genre_ax = fig.add_subplot(gs[2])
+    _draw_highlights_editorial(fig.add_subplot(gs[1]), highlights)
+    _draw_books_per_month_editorial(fig.add_subplot(gs[2]), stats, fmt=fmt)
+    genre_ax = fig.add_subplot(gs[3])
     _draw_genres_editorial(genre_ax, genre_data, stats)
     _set_subplot_left(genre_ax, 0.25)
-    _draw_book_list_editorial(fig.add_subplot(gs[3]), stats, fmt=fmt)
+    _draw_book_list_editorial(fig.add_subplot(gs[4]), stats, fmt=fmt)
 
     _draw_section_rules_editorial(fig, gs)
     _draw_footer_editorial(fig, stats)
 
     fig.savefig(path, dpi=fmt["dpi"], facecolor=COLOR_PAGE_BG)
     plt.close(fig)
+
+
+def _draw_highlights_editorial(ax, highlights: dict) -> None:
+    """Editorial highlights row — same layout as cards' but on the page bg
+    (no card behind), with serif values and slightly smaller labels."""
+    _strip_axes(ax)
+    ax.set_facecolor(COLOR_PAGE_BG)
+
+    keys = [k for k in ("peak_month", "top_author", "longest", "avg_pages") if k in highlights]
+    if not keys:
+        return
+
+    n = len(keys)
+    for i, key in enumerate(keys):
+        label, primary, detail = highlights[key]
+        x = (i + 0.5) / n
+        ax.text(x, 0.85, label.upper(),
+                ha="center", va="center",
+                color=COLOR_TEXT_MUTED, fontsize=8.5, fontweight="bold",
+                transform=ax.transAxes)
+        ax.text(x, 0.50, primary,
+                ha="center", va="center",
+                color=COLOR_TEXT_HIGH, fontsize=15, fontweight="bold",
+                family="serif",
+                transform=ax.transAxes)
+        ax.text(x, 0.18, detail,
+                ha="center", va="center",
+                color=COLOR_TEXT_MUTED, fontsize=10, fontweight="regular",
+                transform=ax.transAxes)
+        if i < n - 1:
+            x_div = (i + 1) / n
+            line = plt.Line2D(
+                [x_div, x_div], [0.15, 0.85],
+                transform=ax.transAxes,
+                color=COLOR_EDITORIAL_RULE, linewidth=0.6,
+            )
+            ax.add_line(line)
 
 
 def _draw_section_rules_editorial(fig, gs) -> None:
@@ -1273,7 +1402,9 @@ def _draw_book_list_editorial(ax, stats: Stats, fmt: dict | None = None) -> None
     visible = titles[:list_max]
     n_lines = len(visible) + (1 if truncated else 0)
 
-    if n_lines <= 24:
+    if n_lines <= 18:
+        font_size = 14
+    elif n_lines <= 30:
         font_size = 13
     elif n_lines <= 50:
         font_size = 12
