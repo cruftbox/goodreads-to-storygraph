@@ -16,13 +16,9 @@
         <span class="action-title">Sync to StoryGraph</span>
         <span class="action-sub">Push recent ratings to StoryGraph (opens Chrome).</span>
       </button>
-      <button id="stats-btn" class="action" data-style="cards">
-        <span class="action-title">Generate Year in Books — Cards</span>
-        <span class="action-sub">Current design: cards on a cream background, color-coded charts.</span>
-      </button>
-      <button id="stats-editorial-btn" class="action" data-style="editorial">
-        <span class="action-title">Generate Year in Books — Editorial</span>
-        <span class="action-sub">NYT/Bloomberg-inspired: no cards, horizontal rules, serif headline, restrained palette.</span>
+      <button id="stats-btn" class="action">
+        <span class="action-title">Generate Year in Books</span>
+        <span class="action-sub">Renders an editorial HTML/PDF/PNG report of the last 12 months.</span>
       </button>
     </section>
 
@@ -43,7 +39,6 @@
   <script>
     const syncBtn = document.getElementById("sync-btn");
     const statsBtn = document.getElementById("stats-btn");
-    const statsEditorialBtn = document.getElementById("stats-editorial-btn");
     const statusSection = document.getElementById("status-section");
     const statusTitle = document.getElementById("status-title");
     const statusPill = document.getElementById("status-pill");
@@ -130,21 +125,18 @@
 
     // --- stats ---
 
-    async function runStats(style, button) {
-      const styleLabel = style === "editorial" ? "Editorial" : "Cards";
+    statsBtn.addEventListener("click", async () => {
       reveal();
       resetStatusUI();
-      statusTitle.textContent = "Year in Books — " + styleLabel;
+      statusTitle.textContent = "Year in Books";
       setPill("Generating…", "running");
 
       syncBtn.disabled = true;
       statsBtn.disabled = true;
-      statsEditorialBtn.disabled = true;
 
-      const res = await postJSON("/generate-stats?style=" + encodeURIComponent(style));
+      const res = await postJSON("/generate-stats");
       syncBtn.disabled = false;
       statsBtn.disabled = false;
-      statsEditorialBtn.disabled = false;
 
       if (!res.ok) {
         const msg = (res.data && res.data.error) || ("HTTP " + res.status);
@@ -162,7 +154,7 @@
       statsResult.innerHTML = `
         <strong>${d.total_books.toLocaleString()}</strong> books,
         <strong>${d.total_pages.toLocaleString()}</strong> pages
-        in the last 12 months${missing}.  <em>Style: ${styleLabel}.</em>
+        in the last 12 months${missing}.
       `;
       show(statsResult);
 
@@ -191,10 +183,7 @@
         </figure>
       `).join("");
       show(previews);
-    }
-
-    statsBtn.addEventListener("click",          () => runStats("cards",     statsBtn));
-    statsEditorialBtn.addEventListener("click", () => runStats("editorial", statsEditorialBtn));
+    });
   </script>
 </body>
 </html>
