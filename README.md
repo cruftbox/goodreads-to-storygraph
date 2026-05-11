@@ -30,8 +30,6 @@ Books on your Goodreads shelf with no read date set are skipped (they have no pl
 
 Rendering uses Playwright (headless Chromium) to print the HTML to PDF and screenshot it at two breakpoints, so PDF and web output stay perfectly consistent with what you see in a browser.
 
-**Run from the web UI:** click *Generate Year in Books*.
-
 **Run from the command line:**
 
 ```bash
@@ -41,6 +39,12 @@ python goodreads_stats.py
 Optional flags: `--user-id` (override config), `--output-dir DIR` (default `output`), `--config PATH` (default `config.json`).
 
 No StoryGraph credentials are needed — only `goodreads_user_id`.
+
+**Using the web UI:** click *Generate Year in Books*.
+
+<p align="center">
+  <img src="docs/web-ui-preview.png" alt="The local web UI after generating a Year in Books report — shows the Generate Year in Books button and the resulting HTML / PDF / Web PNG / Social Card PNG download links" width="500">
+</p>
 
 ---
 
