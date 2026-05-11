@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-10
 **Status:** Approved by user, ready for implementation plan
-**Repo:** cruftbox/goodreads-to-storygraph
+**Repo:** cruftbox/goodreads-tools
 
 ## Goal
 

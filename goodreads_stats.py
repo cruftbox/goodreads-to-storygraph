@@ -27,7 +27,7 @@ from bs4 import BeautifulSoup
 
 GOODREADS_RSS_URL = "https://www.goodreads.com/review/list_rss/{user_id}?shelf=read"
 GOOGLE_BOOKS_URL = "https://www.googleapis.com/books/v1/volumes"
-USER_AGENT = "Mozilla/5.0 (compatible; goodreads-to-storygraph/1.0)"
+USER_AGENT = "Mozilla/5.0 (compatible; goodreads-tools/1.0)"
 
 # BISAC top-level categories that are too generic to be useful as a genre bucket.
 # When Google Books returns ONLY one of these for a book (no subcategory), we

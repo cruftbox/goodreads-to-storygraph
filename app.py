@@ -1,4 +1,4 @@
-"""Local Flask web UI for goodreads-to-storygraph.
+"""Local Flask web UI for goodreads-tools.
 
 Two buttons:
   - Sync to StoryGraph: spawns book_sync.py as a subprocess, streams the log.
