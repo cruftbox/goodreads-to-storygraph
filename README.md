@@ -1,45 +1,37 @@
-# Goodreads to StoryGraph Sync Setup Guide
+# goodreads-tools
 
-Caveat:  This is a complete hack that I made using Claude.ai to write the Python code for me.  I hope it works for you, but I can't guarantee success. 
+I'm a reader who likes to track what I've read. These are a couple of tools I built for myself to scratch that itch — sharing them here in case they're useful to someone else.
 
-I use it on Windows, but you should be able to run it on a Mac or Linux computer, as long as you can get Python & pip running.
+Two features:
 
-Note: this script syncs books you've **rated** on Goodreads (the entries in your updates feed of the form "gave N stars to..."). Books you finish without rating won't be picked up.
+- **Year in Books report** — a stable script that pulls your Goodreads read shelf and renders a one-page editorial-style summary (HTML / PDF / web PNG / social PNG) covering the **last 12 months on a rolling basis** — no need to wait for Goodreads' traditional year-end recap.
+- **Goodreads → StoryGraph sync** — a complete hack to mirror rated books from Goodreads into StoryGraph. StoryGraph doesn't have a public API, so the script drives a real browser session with Selenium. It mostly works.
+
+Only tested on Windows 11, but should work on macOS and Linux with Python and Chrome installed.
+
+> **Tip:** an LLM coding assistant (Claude Code, ChatGPT, Cursor, etc.) is genuinely helpful when installing or debugging this — especially the sync feature, which is browser-driven and can break in interesting ways on new machines. If something doesn't work, paste the error into your assistant of choice.
 
 ## Prerequisites
 
 - Python 3.8 or higher
-- Google Chrome browser installed
-- Windows 11 operating system
-- Basic familiarity with running Python scripts
+- Google Chrome installed (used by both features)
+- `pip` available on your `PATH`
 
-## Installation Steps
+## Install
 
-1. Create a new directory for the project:
 ```bash
-mkdir goodreads-sync
-cd goodreads-sync
-```
-
-2. Install required Python packages:
-```bash
+git clone https://github.com/cruftbox/goodreads-tools.git
+cd goodreads-tools
 pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
-## File Structure
+The last step downloads a headless Chromium build (~150 MB) that the Year in Books report uses to render PDF/PNG output. It's a one-time setup and easy to miss — if the report fails with a Playwright error, this is probably why.
 
-Copy the files into the directory (clone the repo):
-```
-goodreads-sync/
-│
-├── book_sync.py    # The main Python script
-├── config.json      # Configuration file with your credentials
-└── sync_log.txt    # Will be created automatically when the script runs
-```
+## Configure
 
-## Configuration
+Edit `config.json`:
 
-1. Edit `config.json` with the your information:
 ```json
 {
     "goodreads_user_id": "YOUR_GOODREADS_USER_ID",
@@ -48,77 +40,71 @@ goodreads-sync/
 }
 ```
 
-### Finding Your Goodreads User ID
-1. Go to your Goodreads profile
-2. Look at the URL - it will be something like: `https://www.goodreads.com/user/show/12345678-username`
-3. The number (e.g., `12345678`) is your user ID
+- **`goodreads_user_id`** — required for both features. Go to your Goodreads profile; the URL looks like `https://www.goodreads.com/user/show/12345678-username`. The leading number is your user ID.
+- **`storygraph_email`** / **`storygraph_password`** — only needed for the sync feature. If you only care about the Year in Books report, leave these as placeholders.
 
-## Running the Script
+## Run
 
-1. Make sure you're in the project directory:
-```bash
-cd goodreads-sync
-```
-
-2. Run the script:
-```bash
-python book_sync.py
-```
-
-## Web UI (optional)
-
-Instead of running `book_sync.py` directly, you can launch a small local web frontend that wraps the sync and adds a second feature for visualizing the last 12 months of reading.
+The easiest way is the local web UI:
 
 ```bash
 python app.py
 ```
 
-This opens `http://127.0.0.1:5000` in your browser with two buttons:
+This opens `http://127.0.0.1:5000` with one button per feature. The server binds to `127.0.0.1` only — it isn't reachable from other machines on your network.
 
-- **Sync to StoryGraph** — runs `book_sync.py` as a subprocess. Chrome opens exactly as today and the log streams to the page.
-- **Generate Year in Books** — fetches your Goodreads read shelf and renders a one-page visualization in three formats:
-  - `output/year_in_books.pdf` — Letter portrait, vector
-  - `output/year_in_books_web.png` — 1200×1800
-  - `output/year_in_books_social.png` — 1080×1920, sized for Instagram Stories
+You can also run either feature directly from the command line — see the per-feature sections below.
 
-The Year in Books feature uses the public Goodreads RSS for your read shelf and the Google Books API for genre data. No additional credentials are needed beyond the `goodreads_user_id` already in `config.json`.
+---
 
-The server binds to `127.0.0.1` only — it isn't reachable from other machines on your network. Generated files in `output/` are gitignored.
+## Feature: Year in Books report
 
-## What to Expect
+Pulls your Goodreads **read shelf** RSS feed, windows the books to the last 12 months from today, looks up genres via the Google Books API (with a Goodreads page-scrape fallback when Google Books comes up empty), then renders an editorial one-page report in four formats:
 
-- The script will create a log file (`sync_log.txt`) that tracks all operations
-- Chrome will open automatically and handle the sync process
-- The script will:
-  1. Fetch your recently rated books from Goodreads
-  2. Log into your StoryGraph account
-  3. Add each book to your StoryGraph reading journal with the correct completion date
+- `output/year_in_books.html` — the single source of truth, generated from a Jinja2 template
+- `output/year_in_books.pdf` — Letter portrait, vector
+- `output/year_in_books_web.png` — 1200×1800, for embedding or sharing
+- `output/year_in_books_social.png` — 1080×1920, sized for Instagram Stories
+
+Rendering uses Playwright (headless Chromium) to print the HTML to PDF and screenshot it at two breakpoints, so PDF and web output stay perfectly consistent with what you see in a browser.
+
+**Run from the web UI:** click *Generate Year in Books*.
+
+**Run from the command line:**
+
+```bash
+python goodreads_stats.py
+```
+
+Optional flags: `--user-id` (override config), `--output-dir DIR` (default `output`), `--config PATH` (default `config.json`).
+
+No StoryGraph credentials are needed — only `goodreads_user_id`.
+
+---
+
+## Feature: Goodreads → StoryGraph sync
+
+> This one is a complete hack. StoryGraph doesn't expose a public API, so the only way to push books into it programmatically is to drive a real browser session and click through the UI. The script uses Selenium to do exactly that. It works on my machine; your mileage may vary.
+
+It mirrors books you've **rated** on Goodreads (entries in your updates feed of the form *"gave N stars to…"*) into your StoryGraph reading journal, with the correct completion date. Books you finish without rating won't be picked up.
+
+**Run from the web UI:** click *Sync to StoryGraph*. Chrome will open and you can watch it work. The log streams to the page.
+
+**Run from the command line:**
+
+```bash
+python book_sync.py
+```
+
+Either way, a `sync_log.txt` file in the project directory captures everything for later inspection.
 
 ## Troubleshooting
 
-If you encounter errors:
-1. Check `sync_log.txt` for detailed error messages
-2. Verify your Goodreads ID and StoryGraph credentials in `config.json`
-3. Ensure all required Python packages are installed
-4. Make sure Chrome is up to date
-5. Look for screenshot files (e.g., `login_error.png` or `book_error_*.png`) that may have been created during errors
+- **Year in Books fails with a Playwright / browser error.** You probably skipped `python -m playwright install chromium` during install. Run it.
+- **Sync fails to log in.** Re-check `storygraph_email` / `storygraph_password` in `config.json`. Check `sync_log.txt` for the actual error. The sync script also drops screenshots (e.g. `login_error.png`, `book_error_*.png`) into the project directory when something goes wrong — those are usually the fastest path to diagnosis.
+- **Sync sees zero books to add.** Confirm `goodreads_user_id` is correct, and that the books you expect are actually *rated* on Goodreads (not just finished).
+- **Anything else.** Paste the error into an LLM coding assistant. Most install/runtime issues are environment-specific and fall well within what these assistants can debug.
 
-## Best Practices
+## Safety note
 
-1. Keep your `config.json` secure and never share it
-2. Run the script periodically (e.g., weekly) to keep your StoryGraph journal up to date
-3. Monitor the log file for any issues
-4. Update Python packages periodically to ensure compatibility
-
-## Safety Notes
-
-- The script stores your StoryGraph password in plain text in `config.json`
-- Keep the config file secure and don't share it
-
-## Support
-
-If you encounter issues:
-1. Check the log file for error messages
-2. Verify your credentials
-3. Ensure all prerequisites are installed
-4. Try running the script again after a few minutes
+`config.json` stores your StoryGraph password in plain text. Keep the file private and don't commit it to a public repo. The included `.gitignore` already excludes generated output.
