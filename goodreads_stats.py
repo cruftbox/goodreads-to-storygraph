@@ -115,30 +115,32 @@ def _compute_formats(stats: "Stats", style: str = "cards") -> list:
       headline, NYT/Bloomberg-graphics aesthetic.
     """
     n = max(0, stats.total_books)
+    # Tunables: each extra book adds this many vertical inches at the
+    # format's native DPI scale. Base heights bumped to absorb the added
+    # highlights section without squeezing other sections.
     extra_per_book = 0.18
     extra_books = max(0, n - 8)
-    web_h = 10.0 + extra_books * extra_per_book
-    pdf_h = 10.5 + extra_books * extra_per_book
-    # Social grows vertically too — user prioritized full book list over a
-    # fixed Instagram-Story aspect. The image is wider than 9:16 only when
-    # the list is long; for a slim year it stays close to portrait.
-    social_h = 10.6667 + extra_books * 0.16
+    web_h = 11.8 + extra_books * extra_per_book
+    pdf_h = 12.3 + extra_books * extra_per_book
+    social_h = 12.4 + extra_books * 0.16
 
     suffix = "" if style == "cards" else f"_{style}"
     return [
         {"name": "pdf",    "filename": f"year_in_books{suffix}.pdf",
-         "size_in": (8.5, max(11.0, pdf_h)), "dpi": 100, "list_max": 200,
+         "size_in": (8.5, max(12.0, pdf_h)), "dpi": 100, "list_max": 200,
          "list_lines_estimate": n + 1, "title_cap": 70, "date_col_left": 0.84,
-         "x_label_rotation": 0, "style": style},
+         "x_label_rotation": 0, "masthead_size": 22, "style": style},
         {"name": "web",    "filename": f"year_in_books{suffix}_web.png",
-         "size_in": (8.0, max(10.5, web_h)), "dpi": 150, "list_max": 200,
+         "size_in": (8.0, max(11.5, web_h)), "dpi": 150, "list_max": 200,
          "list_lines_estimate": n + 1, "title_cap": 70, "date_col_left": 0.84,
-         "x_label_rotation": 0, "style": style},
+         "x_label_rotation": 0, "masthead_size": 22, "style": style},
         {"name": "social", "filename": f"year_in_books{suffix}_social.png",
-         "size_in": (6.0, max(10.6667, social_h)), "dpi": 180, "list_max": 200,
+         "size_in": (6.0, max(12.0, social_h)), "dpi": 180, "list_max": 200,
          "list_lines_estimate": n + 1,
          "title_cap": 38, "date_col_left": 0.76, "x_label_rotation": 30,
-         "style": style},
+         # Social is narrower (1080px); a smaller masthead size prevents the
+         # summary line from overflowing the card edge.
+         "masthead_size": 17, "style": style},
     ]
 
 
@@ -146,7 +148,7 @@ def _compute_height_ratios(n_list_lines: int) -> list:
     """Section ratios for the five-section layout: masthead, highlights,
     monthly chart, genres, book list."""
     masthead = 2.10
-    highlights = 1.55   # 3-line stats need more vertical room than the old single-value version
+    highlights = 2.40   # 2x2 grid needs roughly twice the vertical room of a single row   # 3-line stats need more vertical room than the old single-value version
     chart = 2.80
     genres = 2.55
     # Per-line allocation bumped 0.36 → 0.50 — the user has flagged
@@ -694,7 +696,7 @@ def _render_cards(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     # Card backgrounds drawn first so they sit behind every chart artist.
     _draw_section_cards(fig, gs)
 
-    _draw_masthead(fig.add_subplot(gs[0]), stats)
+    _draw_masthead(fig.add_subplot(gs[0]), stats, fmt=fmt)
     _draw_highlights_cards(fig.add_subplot(gs[1]), highlights)
     _draw_books_per_month(fig.add_subplot(gs[2]), stats, fmt=fmt)
     genre_ax = fig.add_subplot(gs[3])
@@ -759,7 +761,7 @@ def _strip_axes(ax):
     ax.set_facecolor(COLOR_PANEL_BG)
 
 
-def _draw_masthead(ax, stats: Stats):
+def _draw_masthead(ax, stats: Stats, fmt: dict | None = None):
     """Combined title + hero in a single card. Headline → date deck →
     big stat number → label, all in one section so we don't get two
     half-empty cards stacked at the top of the page."""
@@ -771,8 +773,9 @@ def _draw_masthead(ax, stats: Stats):
         headline = "Your Year in Books"
 
     # All three lines at the same point size; visual hierarchy comes from
-    # weight and color, not size variation.
-    masthead_size = 20
+    # weight and color, not size variation. Social uses a smaller size
+    # because the 1080px aspect doesn't fit the wider headline at 20pt.
+    masthead_size = (fmt or {}).get("masthead_size", 20)
 
     ax.text(0.5, 0.82, headline,
             ha="center", va="center",
@@ -799,43 +802,62 @@ def _draw_masthead(ax, stats: Stats):
             transform=ax.transAxes)
 
 
-def _draw_highlights_cards(ax, highlights: dict) -> None:
-    """Four small stat callouts in a row, each a label + a value. Card
-    style: subtle dividers between them, no separate cards-per-stat."""
+def _draw_highlights_grid(ax, highlights: dict, *, divider_color: str, serif_primary: bool) -> None:
+    """Render the highlights as a 2x2 grid. Each cell has a label, a
+    primary value, and a small detail. Dividers run between rows and
+    columns. Used by both the cards and editorial pipelines."""
     _strip_axes(ax)
-    ax.set_facecolor(COLOR_CARD_BG)
 
     keys = [k for k in ("peak_month", "top_author", "longest", "avg_pages") if k in highlights]
     if not keys:
         return
 
-    n = len(keys)
+    cols = 2
+    rows = max(1, (len(keys) + cols - 1) // cols)
+    cell_w = 1.0 / cols
+    cell_h = 1.0 / rows
+
     for i, key in enumerate(keys):
         label, primary, detail = highlights[key]
-        x = (i + 0.5) / n  # center each stat in its column
-        # Three lines per column: label up top, big value in the middle,
-        # small caption below.
-        ax.text(x, 0.85, label.upper(),
+        col = i % cols
+        row = i // cols
+        cx = (col + 0.5) * cell_w           # cell center x
+        cy = 1.0 - (row + 0.5) * cell_h     # cell center y (top row first)
+
+        # Three lines within the cell: label / primary / detail
+        ax.text(cx, cy + 0.30 * cell_h, label.upper(),
                 ha="center", va="center",
-                color=COLOR_TEXT_MUTED, fontsize=8.5, fontweight="bold",
+                color=COLOR_TEXT_MUTED, fontsize=9, fontweight="bold",
                 transform=ax.transAxes)
-        ax.text(x, 0.50, primary,
+        kwargs = {"family": "serif"} if serif_primary else {}
+        ax.text(cx, cy, primary,
                 ha="center", va="center",
-                color=COLOR_TEXT_HIGH, fontsize=14, fontweight="bold",
-                transform=ax.transAxes)
-        ax.text(x, 0.18, detail,
+                color=COLOR_TEXT_HIGH, fontsize=16, fontweight="bold",
+                transform=ax.transAxes, **kwargs)
+        ax.text(cx, cy - 0.30 * cell_h, detail,
                 ha="center", va="center",
                 color=COLOR_TEXT_MUTED, fontsize=10, fontweight="regular",
                 transform=ax.transAxes)
-        # Vertical divider between columns
-        if i < n - 1:
-            x_div = (i + 1) / n
-            line = plt.Line2D(
-                [x_div, x_div], [0.15, 0.85],
-                transform=ax.transAxes,
-                color=COLOR_DIVIDER, linewidth=0.6,
-            )
-            ax.add_line(line)
+
+    # Vertical divider down the middle
+    if cols > 1:
+        line = plt.Line2D(
+            [0.5, 0.5], [0.05, 0.95],
+            transform=ax.transAxes, color=divider_color, linewidth=0.6,
+        )
+        ax.add_line(line)
+    # Horizontal divider between the two rows
+    if rows > 1:
+        line = plt.Line2D(
+            [0.05, 0.95], [0.5, 0.5],
+            transform=ax.transAxes, color=divider_color, linewidth=0.6,
+        )
+        ax.add_line(line)
+
+
+def _draw_highlights_cards(ax, highlights: dict) -> None:
+    ax.set_facecolor(COLOR_CARD_BG)
+    _draw_highlights_grid(ax, highlights, divider_color=COLOR_DIVIDER, serif_primary=False)
 
 
 def _draw_books_per_month(ax, stats: Stats, fmt: dict | None = None):
@@ -1115,7 +1137,7 @@ def _compute_height_ratios_editorial(n_list_lines: int) -> list:
     """Editorial layout — matches cards proportions section-by-section but
     with no card backgrounds and hairline rules instead."""
     masthead = 2.10
-    highlights = 1.55
+    highlights = 2.40   # 2x2 grid needs roughly twice the vertical room of a single row
     chart = 2.80
     genres = 2.55
     list_h = 0.45 + n_list_lines * 0.50
@@ -1137,7 +1159,7 @@ def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
     highlights = compute_highlights(stats)
 
     # No section cards — sections sit directly on the page background.
-    _draw_masthead_editorial(fig.add_subplot(gs[0]), stats)
+    _draw_masthead_editorial(fig.add_subplot(gs[0]), stats, fmt=fmt)
     _draw_highlights_editorial(fig.add_subplot(gs[1]), highlights)
     _draw_books_per_month_editorial(fig.add_subplot(gs[2]), stats, fmt=fmt)
     genre_ax = fig.add_subplot(gs[3])
@@ -1153,40 +1175,8 @@ def _render_editorial(stats: Stats, genre_data, fmt: dict, path: Path) -> None:
 
 
 def _draw_highlights_editorial(ax, highlights: dict) -> None:
-    """Editorial highlights row — same layout as cards' but on the page bg
-    (no card behind), with serif values and slightly smaller labels."""
-    _strip_axes(ax)
     ax.set_facecolor(COLOR_PAGE_BG)
-
-    keys = [k for k in ("peak_month", "top_author", "longest", "avg_pages") if k in highlights]
-    if not keys:
-        return
-
-    n = len(keys)
-    for i, key in enumerate(keys):
-        label, primary, detail = highlights[key]
-        x = (i + 0.5) / n
-        ax.text(x, 0.85, label.upper(),
-                ha="center", va="center",
-                color=COLOR_TEXT_MUTED, fontsize=8.5, fontweight="bold",
-                transform=ax.transAxes)
-        ax.text(x, 0.50, primary,
-                ha="center", va="center",
-                color=COLOR_TEXT_HIGH, fontsize=15, fontweight="bold",
-                family="serif",
-                transform=ax.transAxes)
-        ax.text(x, 0.18, detail,
-                ha="center", va="center",
-                color=COLOR_TEXT_MUTED, fontsize=10, fontweight="regular",
-                transform=ax.transAxes)
-        if i < n - 1:
-            x_div = (i + 1) / n
-            line = plt.Line2D(
-                [x_div, x_div], [0.15, 0.85],
-                transform=ax.transAxes,
-                color=COLOR_EDITORIAL_RULE, linewidth=0.6,
-            )
-            ax.add_line(line)
+    _draw_highlights_grid(ax, highlights, divider_color=COLOR_EDITORIAL_RULE, serif_primary=True)
 
 
 def _draw_section_rules_editorial(fig, gs) -> None:
@@ -1205,7 +1195,7 @@ def _draw_section_rules_editorial(fig, gs) -> None:
         fig.add_artist(line)
 
 
-def _draw_masthead_editorial(ax, stats: Stats) -> None:
+def _draw_masthead_editorial(ax, stats: Stats, fmt: dict | None = None) -> None:
     """Editorial masthead — same three-line structure as the cards version
     so the user's tuned spacing carries over. The only differences from
     cards: serif font for the headline and summary, single uniform size
@@ -1220,7 +1210,8 @@ def _draw_masthead_editorial(ax, stats: Stats) -> None:
         headline = "Your Year in Books"
 
     # All three lines at one type size; weight + family carry the hierarchy.
-    masthead_size = 22
+    # Social aspect gets a smaller size so the summary doesn't overflow.
+    masthead_size = (fmt or {}).get("masthead_size", 22)
 
     ax.text(0.5, 0.82, headline,
             ha="center", va="center",
