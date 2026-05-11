@@ -15,6 +15,10 @@ Only tested on Windows 11, but should work on macOS and Linux with Python and Ch
 
 ## Feature: Year in Books report
 
+<p align="center">
+  <img src="docs/year-in-books-preview.png" alt="Year in Books preview — the 9:16 social card showing masthead, stats, monthly chart, and full book list" width="360">
+</p>
+
 Pulls your Goodreads **read shelf** RSS feed, windows the books to the last 12 months from today, looks up genres via the Google Books API (with a Goodreads page-scrape fallback when Google Books comes up empty), then renders an editorial one-page report in several formats:
 
 - `output/year_in_books.html` — the single source of truth, generated from a Jinja2 template
